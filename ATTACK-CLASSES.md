@@ -4,6 +4,8 @@
 
 Select attack classes relevant to the application type. Not every class applies to every codebase. The list below is a starting point — add application-specific ones based on Phase 1. For large codebases, split classes per subsystem.
 
+> **Native / binary / kernel targets** (C/C++/Rust-unsafe, kernel modules, parsers and decoders, reverse-engineering tooling, runtimes/JITs, firmware): the web-oriented classes below fit poorly. Use the memory-safety, binary, and kernel classes in [MEMORY-SAFETY-AND-BINARY.md](MEMORY-SAFETY-AND-BINARY.md) instead of or alongside them.
+
 **Injection** (subagent_type: `general`)
 Trace untrusted input from entry point to dangerous sink. What counts as a "dangerous sink" depends on the application:
 - Web apps: SQL queries, HTML output, shell commands, template engines, file paths, HTTP redirects, deserialization
