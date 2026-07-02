@@ -9,9 +9,10 @@
  * Schema it uses: type (object|array|string|integer), properties, required,
  * additionalProperties:false, enum, const, items, minItems, and oneOf.
  *
- * Two constraints can't be expressed in that subset (a confirmed trace must
- * start at an "entrypoint" and end at a "sink"). They're applied as an explicit,
- * clearly-labelled semantic layer after schema validation.
+ * Some constraints can't be expressed in that subset (a confirmed trace must
+ * start at an "entrypoint", end at a "sink", and only use "propagation" for
+ * intermediate steps). They're applied as an explicit, clearly-labelled
+ * semantic layer after schema validation.
  *
  * Zero dependencies. Exits 0 on success, 1 on validation failure.
  */
@@ -170,7 +171,8 @@ findings.forEach((f, i) => {
 	const errs = collect(f, itemSchema, `[${i}]`);
 
 	// Semantic layer — constraints the schema subset can't express:
-	// a confirmed trace must start at an entrypoint and end at a sink.
+	// a confirmed trace must be one entrypoint, zero or more propagation steps,
+	// then one sink.
 	if (f && f.verdict === "confirmed" && Array.isArray(f.trace) && f.trace.length > 0) {
 		if (f.trace[0] && f.trace[0].kind !== "entrypoint") {
 			errs.push(`[${i}].trace[0].kind must be "entrypoint", got ${JSON.stringify(f.trace[0].kind)}`);
@@ -178,6 +180,11 @@ findings.forEach((f, i) => {
 		const last = f.trace.length - 1;
 		if (f.trace[last] && f.trace[last].kind !== "sink") {
 			errs.push(`[${i}].trace[${last}].kind must be "sink", got ${JSON.stringify(f.trace[last].kind)}`);
+		}
+		for (let j = 1; j < last; j++) {
+			if (f.trace[j] && f.trace[j].kind !== "propagation") {
+				errs.push(`[${i}].trace[${j}].kind must be "propagation", got ${JSON.stringify(f.trace[j].kind)}`);
+			}
 		}
 	}
 

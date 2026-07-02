@@ -55,7 +55,7 @@
               "required": ["kind", "file", "line", "scope", "description"],
               "additionalProperties": false
             },
-            "description": "Sequential code trace from entrypoint to sink, verified against actual source code. The first step must be kind 'entrypoint' and the last must be kind 'sink' (enforced by the validator)."
+            "description": "Sequential code trace from entrypoint to sink, verified against actual source code. The first step must be kind 'entrypoint', the last must be kind 'sink', and any intermediate steps must be kind 'propagation' (enforced by the validator)."
           },
           "conditions": {
             "type": "array",
