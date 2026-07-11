@@ -21,6 +21,7 @@ Multiple runs against the same repo are additive. Each run explores different co
 
 | File | Purpose |
 |------|---------|
+| `.claude/commands/cloudflare-security-audit.md` | Direct slash command that routes `/cloudflare-security-audit ...` to this skill |
 | `SKILL.md` | Setup, core principles, platform terminology, workflow overview, and audit anti-patterns |
 | `RECONNAISSANCE.md` | Phase 1 reconnaissance prompts and synthesis instructions |
 | `HUNTING.md` | Phase 2 orchestration, hunting methodology, and validation rules |
@@ -32,7 +33,6 @@ Multiple runs against the same repo are additive. Each run explores different co
 | `VALIDATION-AND-REPORTING.md` | Phases 3–6 validation, reporting, and verification |
 | `report-schema.json` | JSON schema for `findings.json` (confirmed and rejected finding structures) |
 | `validate-findings.cjs` | Zero-dependency Node.js validator that checks `findings.json` against the schema |
-
 ## Installation
 
 Install the skill with the [Skills CLI](https://skills.sh):
@@ -54,7 +54,19 @@ Run `npx skills --help` for agent-selection and non-interactive options.
 
 ## Usage
 
-Start your coding agent in (or pointed at) the codebase you want to audit, then ask it to do a security audit:
+Start your coding agent in (or pointed at) the codebase you want to audit, then invoke the skill directly:
+
+```
+/cloudflare-security-audit audit this codebase
+```
+
+You can include the target path, output directory, or other guidance after the command:
+
+```
+/cloudflare-security-audit find security vulnerabilities in ./src, output to ~/audits/my-project
+```
+
+You can also ask naturally:
 
 ```
 security audit this codebase
@@ -68,7 +80,7 @@ find security vulnerabilities in ./src
 do a security review, output to ~/audits/my-project
 ```
 
-The skill activates automatically when the request matches its trigger (security audit, find vulnerabilities, pen-test the code, etc.). It will ask for an output directory if you don't specify one, defaulting to `~/security-audit-skill/<repo-name>/run-<N>`.
+The direct `/cloudflare-security-audit` command is the most reliable way to route to this skill when multiple installed skills have overlapping security-review triggers. The skill also activates automatically when the request matches its trigger (security audit, find vulnerabilities, pen-test the code, etc.). It will ask for an output directory if you don't specify one, defaulting to `~/security-audit-skill/<repo-name>/run-<N>`.
 
 ## Requirements
 
