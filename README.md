@@ -17,6 +17,21 @@ The skill runs a structured audit in six phases:
 
 Multiple runs against the same repo are additive. Each run explores different code paths; the skill reads prior `findings.json` files to skip known issues and target gaps.
 
+### SARIF export
+
+To feed audit results into GitHub code scanning, VS Code SARIF viewers, or any
+other SARIF consumer, convert `findings.json` to SARIF 2.1.0:
+
+```bash
+node findings-to-sarif.cjs <output-dir>/findings.json <output-dir>/findings.sarif
+```
+
+Confirmed findings become SARIF results; each finding's `trace` maps to a
+`codeFlow` (entrypoint → sink) that GitHub code scanning renders as a
+step-through path, and `overall_severity` maps to the code-scanning severity
+buckets. Rejected findings are excluded from results but counted in
+`run.properties` so the audit trail stays intact.
+
 ## Files
 
 | File | Purpose |
@@ -32,6 +47,7 @@ Multiple runs against the same repo are additive. Each run explores different co
 | `VALIDATION-AND-REPORTING.md` | Phases 3–6 validation, reporting, and verification |
 | `report-schema.json` | JSON schema for `findings.json` (confirmed and rejected finding structures) |
 | `validate-findings.cjs` | Zero-dependency Node.js validator that checks `findings.json` against the schema |
+| `findings-to-sarif.cjs` | Zero-dependency Node.js converter from `findings.json` to SARIF 2.1.0 |
 
 ## Installation
 
