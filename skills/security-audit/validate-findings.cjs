@@ -7,7 +7,7 @@
  * The validation rules live in report-schema.json — the single source of truth.
  * This script reads that schema at runtime and interprets the subset of JSON
  * Schema it uses: type (object|array|string|integer), properties, required,
- * additionalProperties:false, enum, const, items, minItems, and oneOf.
+ * additionalProperties:false, enum, const, items, minItems, minimum, and oneOf.
  *
  * Some constraints can't be expressed in that subset (a confirmed trace must
  * start at an "entrypoint", end at a "sink", and only use "propagation" for
@@ -104,6 +104,10 @@ function validate(value, schema, p, errors) {
 	if (schema.enum && !schema.enum.includes(value)) {
 		const allowed = schema.enum.map((v) => JSON.stringify(v)).join(", ");
 		errors.push(`${p}: invalid value ${JSON.stringify(value)} (expected one of ${allowed})`);
+	}
+
+	if (typeof schema.minimum === "number" && typeof value === "number" && value < schema.minimum) {
+		errors.push(`${p}: must be >= ${schema.minimum}, got ${value}`);
 	}
 
 	switch (schema.type) {
