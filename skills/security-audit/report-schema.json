@@ -41,7 +41,8 @@
                   "description": "Exact file path relative to repository root."
                 },
                 "line": {
-                  "type": "integer"
+                  "type": "integer",
+                  "minimum": 1
                 },
                 "scope": {
                   "type": "string",

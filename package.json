@@ -1,0 +1,7 @@
+{
+  "name": "security-audit-skill",
+  "private": true,
+  "scripts": {
+    "test": "node --test"
+  }
+}
