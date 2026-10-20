@@ -112,10 +112,10 @@ Run:
 
 ```sh
 node <skill-dir>/validate-findings.cjs <output-dir>/findings.json
-node <skill-dir>/validate-coverage-ledger.cjs <output-dir>/coverage-ledger.json
+node <skill-dir>/validate-coverage-ledger.cjs <output-dir>/coverage-ledger.json --terminal
 ```
 
-Fix every structural and semantic error before continuing. The findings validator rejects input beyond 5 MiB, 1,000 top-level findings, or 64 nesting levels, and caps reported error output at 100 messages. Validator success proves format and ledger consistency only.
+Fix every structural and semantic error before continuing. The findings validator rejects input beyond 5 MiB, 1,000 top-level findings, or 64 nesting levels, and caps reported error output at 100 messages. Phase 4 and later ledger checks that underwrite a complete run must pass `--terminal`, which rejects remaining `in_progress` and `planned` units. Mid-run ledger updates omit `--terminal` so a live assignment can still validate. Validator success proves format and ledger consistency only.
 
 ### Phase 5: Verify the final records with fresh eyes
 
@@ -144,7 +144,7 @@ Each verifier returns exactly one JSON object: `{"decision":"verified","fingerpr
 
 Do not apply a Phase 5 replacement as final when it promotes a record to a stronger verdict, including any promotion to `confirmed`, or materially changes the root cause, trace, execution input or observed result, demonstrated impact, or severity. Give that complete replacement to a new independent verifier that did not hunt, perform Phase 3 validation, or propose the Phase 5 replacement. The new verifier rechecks the current source and independently reproduces any decisive local result under the execution boundary, then returns `verified` or another replacement. Apply a material replacement only after this fresh verification. If another material replacement results, repeat with a fresh verifier. If budget or independence is unavailable, remove the disputed record from `findings.json`, keep its ledger unit as an unresolved candidate, and set `run_status: "incomplete"` with an exact `incomplete_reason`. Non-material wording or repository-line corrections may be applied directly when they do not change meaning or evidence.
 
-After every applied replacement, rerun both validators and update linked ledger decisions. If a final verifier identifies a separate root cause, assign a new fingerprint and send it through independent candidate validation before inclusion. Set `run_status: "complete"` only when every ledger candidate has an independent final disposition and every retained record passes Phase 5.
+After every applied replacement, rerun both validators and update linked ledger decisions. If a final verifier identifies a separate root cause, assign a new fingerprint and send it through independent candidate validation before inclusion. Set `run_status: "complete"` only when every ledger candidate has an independent final disposition, every retained record passes Phase 5, and the coverage ledger has no `in_progress` or `planned` units. Remaining `blocked` and `deferred` units must be counted in the coverage summary and named as partial-coverage limits; they do not by themselves make the run incomplete.
 
 Do not verify only `confirmed` records. A misleading `needs_validation` handoff wastes owner time and can preserve a false premise.
 
@@ -162,7 +162,7 @@ Write:
 4. Each confirmed finding: repository source location, lower-trust principal, target-native bounded reproduction, conditions, actual result, impact, priority rationale, and smallest source fix.
 5. A separate `NEEDS VALIDATION` table. Give each lead's title, repository trace, exact blocker, bounded local next step, and safe owner-observed deployment check. Do not assign severity or call it a confirmed vulnerability.
 6. Separate hardening notes and positive source patterns.
-7. Coverage summary from the ledger: covered, candidate, blocked, and deferred counts, plus important exclusions and the final critic result.
+7. Coverage summary from the ledger: covered, candidate, blocked, deferred, and in_progress counts, plus important exclusions and the final critic result. An `in_progress` count above zero means an assignment is still open and the run is not complete.
 
 Do not describe rejected records as findings. Mention their fingerprints only when they explain a prior disagreement or coverage decision.
 

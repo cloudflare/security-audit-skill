@@ -176,7 +176,7 @@ In full audit mode, follow all six phases in order:
 5. **Independent record verification** — use fresh agents to verify final source claims and reconcile corrections or state changes.
 6. **Target-neutral report** — derive `REPORT.md`, `FINDINGS-DETAIL.md`, and `NEEDS-VALIDATION.md` from the final records, with no live-probe instructions.
 
-Do not end the run before one of exactly two terminal states: (a) all Phase 6 artifacts are written and both validators pass, or (b) `run_status: "incomplete"` is recorded with its exact reason and the gap is disclosed in the report. Never stop mid-phase.
+Do not end the run before one of exactly two terminal states: (a) all Phase 6 artifacts are written, both validators pass, and the coverage ledger was last checked with `--terminal` (zero `in_progress` and zero `planned` units), or (b) `run_status: "incomplete"` is recorded with its exact reason and the gap is disclosed in the report. Remaining `blocked` and `deferred` units are disclosed as partial coverage, not a silent complete-coverage claim. Never stop mid-phase.
 
 ## Anti-patterns
 

@@ -58,12 +58,12 @@ function errorsFor(value) {
 }
 
 function runCli(contents, options = {}) {
-  const { nodeArgs = [], timeout = CLI_TIMEOUT_MS } = options;
+  const { nodeArgs = [], timeout = CLI_TIMEOUT_MS, extraArgs = [] } = options;
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "validate-coverage-ledger-"));
   const ledgerPath = path.join(directory, "coverage-ledger.json");
   try {
     fs.writeFileSync(ledgerPath, contents);
-    return spawnSync(process.execPath, [...nodeArgs, validatorPath, ledgerPath], {
+    return spawnSync(process.execPath, [...nodeArgs, validatorPath, ledgerPath, ...extraArgs], {
       encoding: "utf8",
       timeout,
     });
@@ -402,6 +402,92 @@ test("enforces state evidence", () => {
     unresolved: ["Unexpected unresolved claim."],
   });
   assert(errorsFor([coveredUnresolved]).some((error) => error.includes("unresolved")));
+});
+
+test("terminal validation rejects in_progress and planned units", () => {
+  const inProgress = unit({ status: "in_progress", agent_id: "hunter-1" });
+  assert.deepEqual(errorsFor([inProgress]), []);
+  assert(validateDocument([inProgress], { terminal: true })
+    .some((error) => error.includes("terminal ledger cannot include in_progress units")));
+
+  const planned = unit();
+  assert.deepEqual(errorsFor([planned]), []);
+  assert(validateDocument([planned], { terminal: true })
+    .some((error) => error.includes("terminal ledger cannot include planned units")));
+
+  const covered = unit({
+    status: "covered",
+    agent_id: "hunter-1",
+    reviewed_paths: ["src/router.ts"],
+    local_checks: [sourceCheck()],
+  });
+  const blocked = unit({
+    canonical_refs: {
+      surface: "src/policy.ts#evaluate",
+      boundary: "src/authz.ts#requireOwner",
+      subsystem: "packages/api",
+      attack_class: "ATTACK-CLASSES.md#Access control",
+    },
+    surface: "Policy evaluate route",
+    status: "blocked",
+    agent_id: "hunter-1",
+    reviewed_paths: ["src/router.ts"],
+    local_checks: [sourceCheck()],
+    unresolved: ["The deployed policy is unavailable."],
+  });
+  const deferred = unit({
+    canonical_refs: {
+      surface: "src/export.ts#GET /export",
+      boundary: "src/authz.ts#requireOwner",
+      subsystem: "packages/api",
+      attack_class: "ATTACK-CLASSES.md#Access control",
+    },
+    surface: "Export route",
+    status: "deferred",
+    unresolved: ["hunter_never_returned"],
+  });
+  const finished = [blocked, covered, deferred].sort((left, right) => (
+    left.coverage_id < right.coverage_id ? -1 : 1
+  ));
+  assert.deepEqual(validateDocument(finished, { terminal: true }), []);
+});
+
+test("CLI --terminal rejects a never-returned in_progress assignment", { skip: !HAS_SAFE_INPUT_OPEN }, () => {
+  const inProgress = unit({ status: "in_progress", agent_id: "hunter-1" });
+  const before = runCli(JSON.stringify([inProgress]));
+  assert.equal(before.status, 0, cliOutput(before));
+  assert.match(before.stdout, /PASS: 1 coverage units valid/);
+
+  const after = runCli(JSON.stringify([inProgress]), { extraArgs: ["--terminal"] });
+  const output = cliOutput(after);
+  assert.equal(after.status, 1, output);
+  assert.match(output, /terminal ledger cannot include in_progress units/);
+});
+
+test("CLI --terminal accepts a finished ledger with disclosed blocked and deferred units", { skip: !HAS_SAFE_INPUT_OPEN }, () => {
+  const covered = unit({
+    status: "covered",
+    agent_id: "hunter-1",
+    reviewed_paths: ["src/router.ts"],
+    local_checks: [sourceCheck()],
+  });
+  const deferred = unit({
+    canonical_refs: {
+      surface: "src/export.ts#GET /export",
+      boundary: "src/authz.ts#requireOwner",
+      subsystem: "packages/api",
+      attack_class: "ATTACK-CLASSES.md#Access control",
+    },
+    surface: "Export route",
+    status: "deferred",
+    unresolved: ["hunter_never_returned"],
+  });
+  const ledger = [covered, deferred].sort((left, right) => (
+    left.coverage_id < right.coverage_id ? -1 : 1
+  ));
+  const result = runCli(JSON.stringify(ledger), { extraArgs: ["--terminal"] });
+  assert.equal(result.status, 0, cliOutput(result));
+  assert.match(result.stdout, /PASS: 2 coverage units valid/);
 });
 
 test("archives prior evidence when a critic assigns a fresh owner", () => {
