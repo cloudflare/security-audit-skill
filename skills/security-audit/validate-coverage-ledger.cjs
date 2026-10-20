@@ -621,8 +621,14 @@ function validateAttempts(value, unit, base, errors) {
         if (typeof check.artifact === "string" && priorArtifacts.has(check.artifact)) {
           errors.push(`${attemptBase}.local_checks[${checkIndex}].artifact: artifact from an earlier attempt cannot be reused`);
         }
-        if (check.method === "local" && typeof check.artifact === "string") priorArtifacts.add(check.artifact);
       });
+      // Promote artifacts only after checking the whole attempt: its checks may
+      // share evidence, while later attempts must not reuse that evidence.
+      for (const check of attempt.local_checks) {
+        if (isObject(check) && check.method === "local" && typeof check.artifact === "string") {
+          priorArtifacts.add(check.artifact);
+        }
+      }
     }
     if (hasFreshOwner) priorOwners.add(attempt.agent_id);
   });
