@@ -490,6 +490,57 @@ test("rejects reassignment owner reuse and evidence mixing", () => {
   assert(errorsFor([unordered]).some((error) => error.includes("strictly increasing")));
 });
 
+test("allows checks within one attempt to share a promoted artifact", () => {
+  const sharedArtifact = unit({
+    attempts: [
+      archivedAttempt({
+        local_checks: [
+          localCheck("hunter-1", {
+            invariant: "First invariant holds.",
+            result: "Observed in local artifact.",
+            artifact: "agents/hunter-1/artifacts/shared-result.txt",
+          }),
+          localCheck("hunter-1", {
+            invariant: "Second invariant holds.",
+            result: "Also observed in local artifact.",
+            artifact: "agents/hunter-1/artifacts/shared-result.txt",
+          }),
+        ],
+      }),
+    ],
+    wave: 2,
+    status: "in_progress",
+    agent_id: "hunter-2",
+  });
+  assert.deepEqual(errorsFor([sharedArtifact]), []);
+
+  const crossAttemptReuse = unit({
+    attempts: [
+      archivedAttempt({
+        local_checks: [
+          localCheck("hunter-1", {
+            artifact: "agents/hunter-1/artifacts/shared-result.txt",
+          }),
+        ],
+      }),
+      archivedAttempt({
+        wave: 2,
+        agent_id: "hunter-2",
+        local_checks: [
+          localCheck("hunter-2", {
+            artifact: "agents/hunter-1/artifacts/shared-result.txt",
+          }),
+        ],
+      }),
+    ],
+    wave: 3,
+    status: "in_progress",
+    agent_id: "hunter-3",
+  });
+  const crossErrors = errorsFor([crossAttemptReuse]);
+  assert(crossErrors.some((error) => error.includes("artifact from an earlier attempt cannot be reused")));
+});
+
 test("rejects unsafe paths and malformed fingerprints", () => {
   for (const value of [
     "/etc/passwd",
