@@ -490,6 +490,33 @@ test("rejects reassignment owner reuse and evidence mixing", () => {
   assert(errorsFor([unordered]).some((error) => error.includes("strictly increasing")));
 });
 
+test("allows checks within one attempt to share a promoted artifact", () => {
+  const sharedArtifact = "agents/hunter-1/artifacts/result.txt";
+  const sharedCheck = () => localCheck("hunter-1", { artifact: sharedArtifact });
+
+  const sameAttempt = unit({
+    attempts: [archivedAttempt({ local_checks: [sharedCheck(), sharedCheck()] })],
+    wave: 2,
+    status: "in_progress",
+    agent_id: "hunter-2",
+  });
+  assert.deepEqual(errorsFor([sameAttempt]), []);
+
+  // The same sharing is still rejected as soon as an attempt boundary is crossed.
+  const acrossAttempts = unit({
+    attempts: [
+      archivedAttempt({ local_checks: [sharedCheck()] }),
+      archivedAttempt({ wave: 2, agent_id: "hunter-2", local_checks: [localCheck("hunter-2", { artifact: sharedArtifact })] }),
+    ],
+    wave: 3,
+    status: "in_progress",
+    agent_id: "hunter-3",
+  });
+  assert(
+    errorsFor([acrossAttempts]).some((error) => error.includes("artifact from an earlier attempt cannot be reused")),
+  );
+});
+
 test("rejects unsafe paths and malformed fingerprints", () => {
   for (const value of [
     "/etc/passwd",
