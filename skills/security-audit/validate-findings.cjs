@@ -39,6 +39,32 @@ const SEVERITY_RANK = new Map([
   ["high", 3],
   ["critical", 4],
 ]);
+const CVSS_BASE_METRICS = Object.freeze({
+  "3.1": Object.freeze({
+    AV: Object.freeze(["N", "A", "P", "L"]),
+    AC: Object.freeze(["L", "H"]),
+    PR: Object.freeze(["N", "L", "H"]),
+    UI: Object.freeze(["N", "R"]),
+    S: Object.freeze(["U", "C"]),
+    C: Object.freeze(["H", "L", "N"]),
+    I: Object.freeze(["H", "L", "N"]),
+    A: Object.freeze(["H", "L", "N"]),
+  }),
+  "4.0": Object.freeze({
+    AV: Object.freeze(["N", "A", "P", "L"]),
+    AC: Object.freeze(["L", "H"]),
+    AT: Object.freeze(["N", "P"]),
+    PR: Object.freeze(["N", "L", "H"]),
+    UI: Object.freeze(["N", "P", "A"]),
+    VC: Object.freeze(["H", "M", "L", "N"]),
+    VI: Object.freeze(["H", "M", "L", "N"]),
+    VA: Object.freeze(["H", "M", "L", "N"]),
+    SC: Object.freeze(["H", "M", "L", "N"]),
+    SI: Object.freeze(["H", "M", "L", "N"]),
+    SA: Object.freeze(["H", "M", "L", "N"]),
+  }),
+});
+const CVSS_METRIC_PATTERN = /^([A-Z][A-Z0-9]*):([A-Za-z0-9]+)$/;
 const LIMITS = Object.freeze({
   inputBytes: 5 * 1024 * 1024,
   nestingDepth: 64,
@@ -482,6 +508,56 @@ function isSafeRelativeSourcePath(value) {
     !WINDOWS_RESERVED_COMPONENT.test(segment));
 }
 
+function collectCvssErrors(cvss, location) {
+  const errors = createErrorList();
+  if (!cvss || typeof cvss !== "object" || Array.isArray(cvss)) return errors;
+  const version = cvss.version;
+  const vector = cvss.vector;
+  if (typeof version !== "string" || !hasOwn(CVSS_BASE_METRICS, version)) return errors;
+  if (typeof vector !== "string") return errors;
+
+  const prefix = `CVSS:${version}/`;
+  if (!vector.startsWith(prefix)) {
+    errors.push(`${location}.vector: must begin with ${safeQuote(prefix)}`);
+    return errors;
+  }
+  const body = vector.slice(prefix.length);
+  if (body.length === 0) {
+    errors.push(`${location}.vector: must contain base metrics after ${safeQuote(prefix)}`);
+    return errors;
+  }
+
+  const allowed = CVSS_BASE_METRICS[version];
+  const seen = new Set();
+  for (const part of body.split("/")) {
+    const match = CVSS_METRIC_PATTERN.exec(part);
+    if (!match) {
+      errors.push(`${location}.vector: malformed metric ${safeQuote(part)}`);
+      continue;
+    }
+    const name = match[1];
+    const value = match[2];
+    if (seen.has(name)) {
+      errors.push(`${location}.vector: duplicate metric ${safeQuote(name)}`);
+      continue;
+    }
+    seen.add(name);
+    if (!hasOwn(allowed, name)) {
+      errors.push(`${location}.vector: ${safeQuote(name)} is not a CVSS ${version} base metric; record base metrics only`);
+      continue;
+    }
+    if (!allowed[name].includes(value)) {
+      errors.push(`${location}.vector: invalid value ${safeQuote(value)} for ${name} (expected one of ${allowed[name].join(", ")})`);
+    }
+  }
+
+  const missing = Object.keys(allowed).filter((name) => !seen.has(name));
+  if (missing.length > 0) {
+    errors.push(`${location}.vector: missing base metric(s) ${missing.join(", ")}`);
+  }
+  return errors;
+}
+
 function collectFindingSemanticErrors(findings) {
   const errors = createErrorList();
   if (!Array.isArray(findings)) return errors;
@@ -561,9 +637,10 @@ function collectFindingSemanticErrors(findings) {
       if (SEVERITY_RANK.has(overall) && SEVERITY_RANK.has(impact) && SEVERITY_RANK.get(overall) > SEVERITY_RANK.get(impact)) {
         errors.push(`${base}.severity.overall_severity: cannot exceed demonstrated impact ${safeQuote(impact)}`);
       }
+      if (hasOwn(finding, "cvss")) errors.push(...collectCvssErrors(finding.cvss, `${base}.cvss`));
     } else if (verdict === "needs_validation") {
       if (hasOwn(finding, "severity")) errors.push(`${base}: needs_validation finding must not contain "severity"`);
-      for (const forbidden of ["execution", "remediation", "reason", "root_cause"]) {
+      for (const forbidden of ["execution", "remediation", "reason", "root_cause", "cvss"]) {
         if (hasOwn(finding, forbidden)) errors.push(`${base}: needs_validation finding must not contain ${safeQuote(forbidden)}`);
       }
       const plan = finding.validation_plan;
@@ -573,7 +650,7 @@ function collectFindingSemanticErrors(findings) {
         errors.push(`${base}.validation_plan: requires at least one visible local or deployment plan`);
       }
     } else if (verdict === "rejected") {
-      for (const forbidden of ["severity", "execution", "remediation", "blockers", "validation_plan", "root_cause"]) {
+      for (const forbidden of ["severity", "execution", "remediation", "blockers", "validation_plan", "root_cause", "cwe", "cvss", "references"]) {
         if (hasOwn(finding, forbidden)) errors.push(`${base}: rejected finding must not contain ${safeQuote(forbidden)}`);
       }
     }

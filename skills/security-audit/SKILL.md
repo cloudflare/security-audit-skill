@@ -151,6 +151,8 @@ Deployment controls, proxy behavior, provider settings, browser headers, identit
 
 Only `confirmed` records receive severity. Likelihood and impact must reflect the demonstrated conditions and result; overall severity cannot exceed demonstrated impact. `needs_validation` means a specific source-grounded boundary hypothesis is blocked, not a low-confidence confirmed vulnerability, and it has no severity.
 
+Only `confirmed` records carry a required `cwe` classification, and only they may carry a `cvss` base vector or `references`. A CVSS vector is optional: omit it rather than guess a metric that depends on a fact outside source, record the vector and never a score, and keep `overall_severity` as the rating of record.
+
 Calibrate overall severity with these anchors:
 
 - **critical** — an unauthenticated actor gains code execution, full data-store access, or takeover of arbitrary accounts.

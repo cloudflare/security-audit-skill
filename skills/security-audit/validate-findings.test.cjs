@@ -61,6 +61,7 @@ function confirmed() {
       overall_severity: "medium",
     },
     confidence: { score: "high", reason: "The source path and result were reproduced." },
+    cwe: ["CWE-639"],
   };
 }
 
@@ -159,6 +160,13 @@ test("schema is an actual top-level array with exactly three branches", () => {
   assert.equal(confirmedSchema.execution.properties.payloads.items.minLength, undefined);
   assert.equal(confirmedSchema.execution.properties.payloads.items.visibleContent, undefined);
   assert.equal(confirmedSchema.remediation.properties.code_changes.items.properties.fixed_code.minLength, undefined);
+  assert.equal(confirmedSchema.cwe.type, "array");
+  assert.equal(confirmedSchema.cwe.minItems, 1);
+  assert.equal(schema.items.oneOf[0].required.includes("cwe"), true);
+  assert.equal(schema.items.oneOf[1].required.includes("cwe"), false);
+  assert.equal(schema.items.oneOf[1].properties.cvss, undefined);
+  assert.equal(schema.items.oneOf[2].properties.cwe, undefined);
+  assert.equal(schema.items.oneOf[2].properties.references, undefined);
 });
 
 test("accepts a producer-shaped findings document through the CLI", () => {
@@ -312,6 +320,101 @@ test("rejects severity above demonstrated impact", () => {
   rejectMutation(confirmed, (finding) => {
     finding.severity.overall_severity = "high";
     finding.severity.impact.score = "medium";
+  });
+});
+
+test("accepts CWE, CVSS base vectors, and references where they are allowed", () => {
+  const finding = confirmed();
+  finding.cvss = { version: "3.1", vector: "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H" };
+  finding.references = [{ url: "https://cwe.mitre.org/data/definitions/639.html" }];
+  assert.deepEqual(errorsFor([finding]), []);
+
+  const v4 = confirmed();
+  v4.cwe = ["CWE-79", "CWE-639"];
+  v4.cvss = { version: "4.0", vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:L/SI:L/SA:L" };
+  v4.references = [{ url: "https://example.com/advisories/1?tab=details#impact" }];
+  assert.deepEqual(errorsFor([v4]), []);
+
+  const blocked = needsValidation();
+  blocked.cwe = ["CWE-1234"];
+  blocked.references = [{ url: "https://example.com/standards/format" }];
+  assert.deepEqual(errorsFor([blocked]), []);
+});
+
+test("requires a well-formed unique CWE list only on confirmed", () => {
+  rejectMutation(confirmed, (finding) => { delete finding.cwe; });
+  rejectMutation(confirmed, (finding) => { finding.cwe = []; });
+  rejectMutation(confirmed, (finding) => { finding.cwe = ["639"]; });
+  rejectMutation(confirmed, (finding) => { finding.cwe = ["cwe-639"]; });
+  rejectMutation(confirmed, (finding) => { finding.cwe = ["CWE-"]; });
+  rejectMutation(confirmed, (finding) => { finding.cwe = ["CWE-0"]; });
+  rejectMutation(confirmed, (finding) => { finding.cwe = ["CWE-0639"]; });
+  rejectMutation(confirmed, (finding) => { finding.cwe = ["CWE-123456"]; });
+  rejectMutation(confirmed, (finding) => { finding.cwe = ["CWE-639", "CWE-79", "CWE-639"]; });
+  rejectMutation(confirmed, (finding) => { finding.cwe = ["CWE-639\n"]; });
+});
+
+test("keeps CVSS and classification fields off records that must not carry them", () => {
+  const vector = { version: "4.0", vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N" };
+  rejectMutation(needsValidation, (finding) => { finding.cvss = vector; });
+  rejectMutation(rejected, (finding) => { finding.cvss = vector; });
+  rejectMutation(rejected, (finding) => { finding.cwe = ["CWE-639"]; });
+  rejectMutation(rejected, (finding) => { finding.references = [{ url: "https://example.com/639" }]; });
+});
+
+test("rejects CVSS vectors that are not well-formed base metrics for the declared version", () => {
+  const cases = [
+    (finding) => { finding.cvss = { version: "4.0", vector: "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H" }; },
+    (finding) => { finding.cvss = { version: "3.1", vector: "CVSS:3.1/" }; },
+    (finding) => { finding.cvss = { version: "3.1", vector: "cvss:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H" }; },
+    (finding) => { finding.cvss = { version: "3.1", vector: "CVSS:3.1/AV:N" }; },
+    (finding) => { finding.cvss = { version: "3.1", vector: "CVSS:3.1/av:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H" }; },
+    (finding) => { finding.cvss = { version: "3.1", vector: "CVSS:3.1/AV:/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H" }; },
+    (finding) => { finding.cvss = { version: "3.1", vector: "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H/AV:P" }; },
+    (finding) => { finding.cvss = { version: "3.1", vector: "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:X" }; },
+    (finding) => { finding.cvss = { version: "3.1", vector: "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H/E:P" }; },
+    (finding) => { finding.cvss = { version: "4.0", vector: "CVSS:4.0/AV:N" }; },
+    (finding) => { finding.cvss = { version: "4.0", vector: "CVSS:4.0/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H" }; },
+    (finding) => { finding.cvss = { version: "3.1", vector: "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H/9.8" }; },
+    (finding) => { finding.cvss = { version: "3.1" }; },
+    (finding) => { finding.cvss = { version: "5.0", vector: "CVSS:5.0/AV:N" }; },
+    (finding) => { finding.cvss = { version: "3.1", vector: "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H", score: "9.8" }; },
+    (finding) => { finding.cvss = { version: "3.1", vector: 9.8 }; },
+  ];
+  for (const mutate of cases) rejectMutation(confirmed, mutate);
+});
+
+test("reports the exact CVSS vector defect", () => {
+  const finding = confirmed();
+  finding.cvss = { version: "3.1", vector: "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:X" };
+  const errors = errorsFor([finding]);
+  assert(errors.some((error) => error.includes('invalid value "X" for A (expected one of H, L, N)')), errors.join("\n"));
+  assert(!errors.some((error) => error.includes("missing base metric")), errors.join("\n"));
+
+  const prefix = confirmed();
+  prefix.cvss = { version: "4.0", vector: "CVSS:3.1/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N" };
+  assert(errorsFor([prefix]).some((error) => error.includes('must begin with "CVSS:4.0/"')));
+
+  const nonBase = confirmed();
+  nonBase.cvss = { version: "3.1", vector: "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H/E:P" };
+  assert(errorsFor([nonBase]).some((error) => error.includes('not a CVSS 3.1 base metric')));
+});
+
+test("requires absolute https reference URLs", () => {
+  rejectMutation(confirmed, (finding) => { finding.references = []; });
+  rejectMutation(confirmed, (finding) => { finding.references = [{ url: "http://example.com/a" }]; });
+  rejectMutation(confirmed, (finding) => { finding.references = [{ url: "example.com/a" }]; });
+  rejectMutation(confirmed, (finding) => { finding.references = [{ url: "https://example.com/a b" }]; });
+  rejectMutation(confirmed, (finding) => { finding.references = [{ url: "https://example.com/a\n" }]; });
+  rejectMutation(confirmed, (finding) => { finding.references = [{ url: "https://example.com/\u0000" }]; });
+  rejectMutation(confirmed, (finding) => { finding.references = [{ url: "https://example.com/\ud800" }]; });
+  rejectMutation(confirmed, (finding) => { finding.references = [{ title: "CWE-639" }]; });
+  rejectMutation(confirmed, (finding) => { finding.references = [{ url: "https://example.com/a", extra: "x" }]; });
+  rejectMutation(confirmed, (finding) => {
+    finding.references = [{ url: "https://example.com/a" }, { url: "https://example.com/a" }];
+  });
+  rejectMutation(needsValidation, (finding) => {
+    finding.references = [{ url: "ftp://example.com/a" }];
   });
 });
 
