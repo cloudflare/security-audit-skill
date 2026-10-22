@@ -35,6 +35,12 @@ A buffer, padding, struct field, or vector capacity is returned, compared, hashe
 **Use-after-free, stale view, and double free**
 Owners are released while callbacks, wait queues, timers, iterators, borrowed slices, or cached raw pointers can still use them. Review every error, cancellation, close, and realloc path. For embedded notification anchors, each free path must drain or detach all observers.
 
+**Abort-path cleanup of partially initialized state**
+An allocation failure, memory or time limit, fatal error, or `longjmp`-style bailout abandons setup midway, then shared cleanup or shutdown code treats the half-built structure as valid. Map every point in startup and parsing where an abort can fire, and check which fields cleanup reads, frees, or dereferences at that point. Attacker-sized input that reaches a configured limit counts as reachable, including input that passes an earlier size check but grows during parsing. Compare hosting modes: one host may run cleanup after a failed startup while another kills the worker first.
+
+**Cross-request stale state in reused workers**
+A runtime, interpreter host, or server reuses a process or thread across requests, and global or per-module state from one request still points to memory freed by an earlier one. List every global that holds a pointer, buffer, error record, or decoder state, and confirm reset runs before any consumer in the next request, including hooks that run before normal initialization such as upload-progress, error-reporting, or diagnostic paths. Fatal errors and timeouts can skip reset, and shutdown diagnostics can repopulate state after it was cleared. Validate with sequential requests pinned to one local worker; suppressed logs do not prove the state is clean.
+
 **Type confusion and invalid downcast**
 A tag, vtable, union discriminator, object kind, or foreign handle is checked differently from the representation later read. Look for unchecked dynamic casts, stale tags after reuse, and serialized types whose validated element differs from the element consumed. Confirm a wrong-type read or write locally without extending the test beyond the violated invariant.
 
@@ -90,6 +96,7 @@ A device node, admin socket, helper, or management API validates shape but not t
 
 - Audit fixes and duplicated paths for the same source-to-sink shape. A check in one caller, architecture, protocol role, feature flag, or compatibility path does not protect its siblings.
 - Build a table for every parser or FFI boundary: accepted length/type, checked representation, allocation owner, consumer, thread, and teardown. Most native findings are one disagreement in that table.
+- Treat each request boundary in a reused worker as a teardown. Record the state that must be reset, whether reset precedes the first read, and every abort path that skips it.
 - Use existing corpora and small locally generated boundary fixtures. Save exact sanitizer/runtime output and the input property that triggers it; avoid large resource consumption and any live target.
 
 ## Validation rules (apply before reporting ANY finding here)

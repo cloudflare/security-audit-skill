@@ -52,7 +52,7 @@ Low-priority or attacker-controlled jobs hold shared locks, workers, database po
 ## Failure and recovery attack classes (subagent_type: `general`)
 
 **Reachable fatal error or deadlock**
-An untrusted input reaches `panic`, abort, fatal assertion, unhandled exception, process exit, lock cycle, or infinite loop in a shared process. Confirm supervisor scope and whether one worker or the whole service becomes unavailable. A restarted isolated worker may reduce impact but does not erase the defect.
+An untrusted input reaches `panic`, abort, fatal assertion, unhandled exception, process exit, lock cycle, or infinite loop in a shared process. Confirm supervisor scope and whether one worker or the whole service becomes unavailable. A restarted isolated worker may reduce impact but does not erase the defect. When the fatal path abandons partially initialized state or skips per-request reset in a reused worker, also route it to the abort-path and cross-request classes in `MEMORY-SAFETY-AND-BINARY.md`; the impact can exceed availability.
 
 **Retry storm and fail-open amplification**
 Timeouts, dependency errors, partially processed messages, or health-check failures trigger synchronized or unbounded retries without jitter, ceilings, circuit breaking, or deduplication. Verify one bounded failure source can create persistent aggregate work.
