@@ -165,6 +165,8 @@ The high/medium discriminator: does the demonstrated result fully defeat an expl
 
 For each confirmed finding, identify the invariant the code must enforce and the narrowest source change that enforces it at the last trusted decision point. Prefer specific repository-relative changes and regression tests over generic hardening advice. The audit describes fixes; it does not modify target source.
 
+The smallest fix changes the least legitimate behavior, not the fewest lines. Before recommending a refusal, name who legitimately uses the refused path: the product's documented flows, its client libraries, its plugins, its published integrations, and any anonymous or unauthenticated mode it advertises. State how each keeps working: unchanged, through a one-step consent the owner can give where they already are, or through a migration of existing state. Record these in `remediation.preserved_uses`. A remediation that removes a documented capability is a design change for the owner to decide; the record says so in `remediation.strategy` instead of presenting it as the fix.
+
 ## Full audit workflow
 
 In full audit mode, follow all six phases in order:

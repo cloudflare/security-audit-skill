@@ -32,7 +32,8 @@ unavailable or fails, do not use that file as evidence.
    result when possible. Verify inputs, interface shape, conditions, and affected
    dummy principal/resource. Do not infer a stronger result or continue after it.
 4. Verify that likelihood, impact, confidence, and the proposed source fix match only
-   what the evidence establishes.
+   what the evidence establishes, and that `remediation.preserved_uses` names the
+   legitimate users of every path the fix refuses.
 5. For a proposed needs_validation candidate, decide whether the blocker is genuinely
    outside source/local observation. If source refutes the trace, reject it. If the
    missing fact remains decisive, keep needs_validation and make the local and
@@ -102,7 +103,7 @@ The parent writes all independently decided records to `<output-dir>/findings.js
 
 Read `report-schema.json` immediately before writing. It uses `additionalProperties: false`; do not carry hunter wrapper fields into a record. Keep these verdict contracts distinct:
 
-- A `confirmed` record uses `root_cause`, `intended_behavior`, `conditions`, `execution`, `remediation`, `severity`, and `confidence`. It must not use `claimed_root_cause`, `blockers`, `validation_plan`, or `reason`. `execution` is target-neutral and uses the target's native interface: API/HTTP input, CLI call, library call, message, file fixture, browser action, rendered policy, or local harness as applicable. `observed_result` is nonempty and factual.
+- A `confirmed` record uses `root_cause`, `intended_behavior`, `conditions`, `execution`, `remediation`, `severity`, and `confidence`. `intended_behavior` says what the path is for as well as what it must prevent. It must not use `claimed_root_cause`, `blockers`, `validation_plan`, or `reason`. `execution` is target-neutral and uses the target's native interface: API/HTTP input, CLI call, library call, message, file fixture, browser action, rendered policy, or local harness as applicable. `observed_result` is nonempty and factual.
 - A `needs_validation` record uses `claimed_root_cause`, `trace`, `evidence`, `blockers`, and at least one nonempty `validation_plan.local` or `validation_plan.deployment` field. Include both only when both contexts can resolve distinct facts. It must not use severity, execution, remediation, reason, or confirmed root cause.
 - A `rejected` record uses `claimed_root_cause`, `trace`, `evidence`, and `reason`. It must not use severity, execution, remediation, blockers, validation plan, or confirmed root cause.
 
@@ -131,6 +132,7 @@ For `confirmed`, require it to check:
 4. Affected principal/resource and demonstrated impact.
 5. Severity separation: realistic likelihood, demonstrated impact, overall no greater than impact.
 6. Remediation strategy and any `code_changes`, including whether the fix enforces the invariant without merely moving trust.
+7. Legitimate users of every path the fix refuses: the product's documented flows, client libraries, plugins, published integrations, and advertised anonymous modes. Each one appears in `remediation.preserved_uses` with how it keeps working, or the strategy states that the fix removes that capability and leaves the design change to the owner.
 
 For `needs_validation`, require it to check:
 
@@ -159,7 +161,7 @@ Write:
 1. Run profile, scope, budget (if set) with agents spent versus planned, source ref, sandboxed source-and-local-only execution statement, prior-run use, and explicit deferred and out-of-scope coverage. Name carried same-source confirmations and changed-source revalidations. A `quick`, scoped, budget-limited, or incomplete run states plainly that it is a partial pass. If candidate validation exhausted a strict budget, state that the run is incomplete and list every unvalidated fingerprint and linked unit; do not describe those candidates as findings. If the budget prevented a mandatory critic, state which critic did not run and make no clean-coverage claim.
 2. One short security posture summary.
 3. A confirmed-findings table: severity, title, affected boundary, and one-line observed result.
-4. Each confirmed finding: repository source location, lower-trust principal, target-native bounded reproduction, conditions, actual result, impact, priority rationale, and smallest source fix.
+4. Each confirmed finding: repository source location, lower-trust principal, target-native bounded reproduction, conditions, actual result, impact, priority rationale, smallest source fix, and the legitimate uses it preserves or the capability it removes.
 5. A separate `NEEDS VALIDATION` table. Give each lead's title, repository trace, exact blocker, bounded local next step, and safe owner-observed deployment check. Do not assign severity or call it a confirmed vulnerability.
 6. Separate hardening notes and positive source patterns.
 7. Coverage summary from the ledger: covered, candidate, blocked, and deferred counts, plus important exclusions and the final critic result.
@@ -175,7 +177,9 @@ For each confirmed `medium`, `high`, or `critical` record, copy the complete sou
 - native input, invocation, or fixture and exact bounded instructions;
 - observed output and the security invariant it proves;
 - conditions and containment;
-- source-level remediation and regression case.
+- source-level remediation and a two-part regression case:
+  - **the attack is refused** — fails against the unfixed code and passes after the fix;
+  - **each named legitimate use still works** — one case per `preserved_uses` entry that passes against both the unfixed and the fixed code. A case that passes only before the fix shows a lost capability, not a preserved one.
 
 #### `NEEDS-VALIDATION.md`
 

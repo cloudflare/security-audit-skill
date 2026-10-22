@@ -47,7 +47,8 @@ WORK FROM A CONCRETE INVARIANT:
 4. Trace the exact source path after that decision.
 5. Stop at the smallest affected dummy record, wrong return value, process-integrity
    effect, or locally observable shared-resource effect.
-6. State a source-level change and regression case that enforce the invariant.
+6. State a source-level change and regression case that enforce the invariant, and
+   name each legitimate use of the refused path and how it keeps working.
 
 DEPTH BOUND: trace only paths that can reach your assigned boundary or whose
 guarantees that boundary relies on. Stop a line of investigation as soon as the

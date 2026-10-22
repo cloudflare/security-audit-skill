@@ -201,6 +201,28 @@ test("rejects empty required content", () => {
   for (const [factory, mutate] of cases) rejectMutation(factory, mutate);
 });
 
+test("accepts remediation preserved uses", () => {
+  const finding = confirmed();
+  finding.remediation.preserved_uses = [{
+    who: "A plugin shared by another tenant that calls with the caller's own key.",
+    path: "Invoke the shared plugin with the caller's stored credential.",
+    how_it_keeps_working: "Unchanged: the credential is still sent to the host it was stored for.",
+  }];
+  assert.deepEqual(errorsFor([finding]), []);
+});
+
+test("rejects malformed remediation preserved uses", () => {
+  const use = () => ({ who: "Owner apps.", path: "First use of a stored credential.", how_it_keeps_working: "Unchanged." });
+  const cases = [
+    (finding) => { finding.remediation.preserved_uses = []; },
+    (finding) => { finding.remediation.preserved_uses = [{ ...use(), who: "" }]; },
+    (finding) => { finding.remediation.preserved_uses = [{ ...use(), how_it_keeps_working: " \u200b" }]; },
+    (finding) => { const entry = use(); delete entry.path; finding.remediation.preserved_uses = [entry]; },
+    (finding) => { finding.remediation.preserved_uses = [{ ...use(), extra: "x" }]; },
+  ];
+  for (const mutate of cases) rejectMutation(confirmed, mutate);
+});
+
 test("preserves exact payload and replacement-code strings", () => {
   const finding = confirmed();
   const payloads = ["", " \t\r\n", "\u0000\u001f\u007f", "\u034f", "\ufe0f", "\ud800", "\udc00"];
