@@ -38,6 +38,7 @@ Return trust boundaries and control locations with repository-relative file:line
 Inventory every source-visible place external or lower-trust input enters:
 - HTTP/browser, RPC/message/protocol, files/archive/document, CLI/env/config, plugins/dependencies/CI, cloud events/IAM selectors, model context/tool arguments, mobile/deep-link/webview, and local IPC.
 For each surface, follow major transformations, stored or derived copies, and security-relevant sinks. Record source-visible limits and parallel paths to the same effect.
+Identify domain-format validators and parsers (checksum, locale, date, currency, phone, ID, postal-code) that gate an accepted value, security decision, or sink input.
 Return repository-relative paths and line numbers. Be complete, but do not execute or send inputs.
 ```
 
@@ -89,7 +90,7 @@ Do not select a companion file merely because the language or dependency name ap
 
 ## Deterministic coverage ledger
 
-The parent writes `<output-dir>/coverage-ledger.json` as a top-level JSON array. Derive one unit for every material combination of entry surface, trust boundary, subsystem, and applicable ordinary or companion attack class at the granularity the run profile sets (`quick` uses one all-in-scope subsystem identity; `deep` adds lifecycle modes). For a scoped run, seed in-scope surfaces for assignment and retain discovered excluded surfaces as `out_of_scope` units so later full runs can turn them into current work.
+The parent writes `<output-dir>/coverage-ledger.json` as a top-level JSON array. Derive one unit for every material combination of entry surface, trust boundary, subsystem, and applicable ordinary or companion attack class at the granularity the run profile sets (`quick` uses one all-in-scope subsystem identity; `deep` adds lifecycle modes). For a scoped run, seed in-scope surfaces for assignment and retain discovered excluded surfaces as `out_of_scope` units so later full runs can turn them into current work. Map files holding domain-format validators or parsers that gate an accepted value or security decision into ledger units under the Business logic attack class (or record them as `out_of_scope` with a reason when their boundary is outside the run's scope), rather than leaving them unmapped.
 
 Each dimension has a human label and a stable source-derived value in `canonical_refs`. Use the same canonical reference for the same source object across runs even if its display label changes. Suitable references include a repository-relative entry path plus exported scope, a route or message identity defined in source, the source control that defines a boundary, a repository package path, and the exact attack-class block reference. A block reference is `FILE.md#` plus the exact class name as written in bold or as a heading in that file — a stable identifier matched against the file text, not a rendered HTML anchor. For companion section blocks, use the heading text before any parenthetical qualifier (for example `Core discipline`). Do not derive references by lowercasing or slugging display labels.
 
