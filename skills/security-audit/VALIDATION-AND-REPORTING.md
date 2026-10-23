@@ -4,13 +4,15 @@
 
 After the clean coverage-critic pass or an explicitly recorded early stop, consolidate Phase 2 candidates and carried same-source prior confirmations by stable fingerprint and root cause. Give every unique proposed `confirmed` and `needs_validation` candidate to a fresh `general` verifier that did not hunt it. A carried prior confirmation follows the same current verification path even though hunters exclude that unchanged root cause. A verifier may read hunter or prior artifacts but must re-read every cited current source location and independently run any decisive check it can reproduce safely.
 
-Assign each verifier a canonical lowercase unique ID and `<output-dir>/agents/<verifier-id>/scratch/` plus parent-owned `artifacts/`. The verifier writes only to `scratch/` and never writes retained artifacts. It receives only the candidate, its linked coverage-unit checks and artifact paths, architecture facts needed to interpret the path, exact relevant companion validation blocks, the promotion procedure block below, the source/local execution boundary, the `confirmed`, `needs_validation`, and `rejected` branches of `report-schema.json` copied verbatim, and prior records with the same fingerprint. It must not receive another verifier's conclusion.
+Assign each verifier a canonical lowercase unique ID and `<output-dir>/agents/<verifier-id>/scratch/` plus parent-owned `artifacts/`. The verifier writes only to `scratch/` and never writes retained artifacts. It receives a verdict-neutral restatement of the candidate (fingerprint, claimed invariant or root cause, trace, evidence, and conditions, with the hunter's `proposed_verdict`, `severity`, `confidence`, and remediation withheld) plus its linked coverage-unit checks and artifact paths, architecture facts needed to interpret the path, exact relevant companion validation blocks, the promotion procedure block below, the source/local execution boundary, the `confirmed`, `needs_validation`, and `rejected` branches of `report-schema.json` copied verbatim, and prior records with the same fingerprint. It must not receive another verifier's conclusion. Withholding the proposal keeps the verifier judging the evidence instead of confirming a suggested verdict or severity.
 
 #### Candidate-verifier prompt
 
 ```text
 You did not write this candidate. Try to refute it from repository source and bounded
-local evidence. Do not contact deployed endpoints or external/shared services. Run
+local evidence. The hunter's proposed verdict, severity, confidence, and remediation
+were withheld; decide each from the evidence alone. Do not contact deployed endpoints
+or external/shared services. Run
 target-controlled code only inside the approved OS-enforced sandbox: no external
 network, empty allowlisted environment, read-only target and tools, scratch-only
 writes, and explicit low resource and wall-clock limits. If any control is unavailable,
@@ -31,8 +33,8 @@ unavailable or fails, do not use that file as evidence.
 3. For a proposed confirmed candidate, independently reproduce the minimum observed
    result when possible. Verify inputs, interface shape, conditions, and affected
    dummy principal/resource. Do not infer a stronger result or continue after it.
-4. Verify that likelihood, impact, confidence, and the proposed source fix match only
-   what the evidence establishes.
+4. Set likelihood, impact, confidence, and the source fix only to what the evidence
+   establishes.
 5. For a proposed needs_validation candidate, decide whether the blocker is genuinely
    outside source/local observation. If source refutes the trace, reject it. If the
    missing fact remains decisive, keep needs_validation and make the local and
@@ -112,10 +114,10 @@ Run:
 
 ```sh
 node <skill-dir>/validate-findings.cjs <output-dir>/findings.json
-node <skill-dir>/validate-coverage-ledger.cjs <output-dir>/coverage-ledger.json
+node <skill-dir>/validate-coverage-ledger.cjs <output-dir>/coverage-ledger.json --target <target-repository-root>
 ```
 
-Fix every structural and semantic error before continuing. The findings validator rejects input beyond 5 MiB, 1,000 top-level findings, or 64 nesting levels, and caps reported error output at 100 messages. Validator success proves format and ledger consistency only.
+Fix every structural and semantic error before continuing. The findings validator rejects input beyond 5 MiB, 1,000 top-level findings, or 64 nesting levels, and caps reported error output at 100 messages. Validator success proves format and ledger consistency; with `--target` it also proves that every repository-relative path the ledger claims exists under the target root, so a unit cannot be closed against paths that were never there.
 
 ### Phase 5: Verify the final records with fresh eyes
 
