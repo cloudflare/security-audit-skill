@@ -2,7 +2,11 @@
 
 /**
  * Validates findings.json against report-schema.json.
- * Usage: node validate-findings.cjs <path-to-findings.json>
+ * Usage: node validate-findings.cjs <path-to-findings.json> [--target <repository-root>]
+ *
+ * With --target, every repository-relative path a non-rejected finding claims in
+ * its trace, evidence, or remediation code changes must exist under the given
+ * repository root. Without it, paths are checked only for safe shape.
  *
  * This is a dependency-free interpreter for the JSON Schema keywords used by
  * report-schema.json, plus finding-specific checks that are clearer in code.
@@ -594,6 +598,52 @@ function validateDocument(findings, schema) {
   return errors;
 }
 
+function collectFindingTargetPaths(findings, entries) {
+  if (!Array.isArray(findings)) return;
+  findings.slice(0, LIMITS.arrayItems).forEach((finding, index) => {
+    if (!finding || typeof finding !== "object" || Array.isArray(finding)) return;
+    // Rejected findings record why a claim does not hold; their paths may
+    // legitimately not exist, so only live findings are ground-truthed.
+    if (finding.verdict === "rejected") return;
+    const base = `$[${index}]`;
+    for (const field of ["trace", "evidence"]) {
+      if (!Array.isArray(finding[field])) continue;
+      finding[field].slice(0, LIMITS.arrayItems).forEach((entry, entryIndex) => {
+        if (!entry || typeof entry !== "object" || Array.isArray(entry)) return;
+        if (typeof entry.file === "string" && isSafeRelativeSourcePath(entry.file)) {
+          entries.push({ location: `${base}.${field}[${entryIndex}].file`, value: entry.file });
+        }
+      });
+    }
+    const codeChanges = finding.remediation && finding.remediation.code_changes;
+    if (!Array.isArray(codeChanges)) return;
+    codeChanges.slice(0, LIMITS.arrayItems).forEach((change, changeIndex) => {
+      if (!change || typeof change !== "object" || Array.isArray(change)) return;
+      if (typeof change.file_name === "string" && isSafeRelativeSourcePath(change.file_name)) {
+        entries.push({ location: `${base}.remediation.code_changes[${changeIndex}].file_name`, value: change.file_name });
+      }
+    });
+  });
+}
+
+function validateTargetPaths(findings, targetRoot) {
+  const errors = createErrorList();
+  const entries = [];
+  collectFindingTargetPaths(findings, entries);
+  for (const { location, value } of entries) {
+    const resolved = path.resolve(targetRoot, ...value.split("/"));
+    const relative = path.relative(targetRoot, resolved);
+    if (relative.startsWith("..") || path.isAbsolute(relative)) {
+      errors.push(`${location}: ${safeQuote(value)} escapes the target repository`);
+      continue;
+    }
+    if (!fs.existsSync(resolved)) {
+      errors.push(`${location}: ${safeQuote(value)} does not exist under the target repository`);
+    }
+  }
+  return errors;
+}
+
 function loadSchema(schemaPath) {
   const schema = JSON.parse(fs.readFileSync(schemaPath, "utf8"));
   const errors = collectSchemaErrors(schema);
@@ -700,10 +750,33 @@ function enforceJsonTextLimits(contents) {
   }
 }
 
-function run(file) {
+function run(file, args = []) {
   if (!file) {
-    console.error("Usage: node validate-findings.cjs <path-to-findings.json>");
+    console.error("Usage: node validate-findings.cjs <path-to-findings.json> [--target <repository-root>]");
     return 1;
+  }
+
+  let targetRoot = null;
+  for (let index = 0; index < args.length; index++) {
+    if (args[index] === "--target" && index + 1 < args.length) {
+      targetRoot = path.resolve(args[++index]);
+    } else {
+      console.error(`Unknown argument: ${args[index]}`);
+      return 1;
+    }
+  }
+  if (targetRoot !== null) {
+    let targetStat;
+    try {
+      targetStat = fs.statSync(targetRoot);
+    } catch {
+      console.error("Target repository root could not be opened");
+      return 1;
+    }
+    if (!targetStat.isDirectory()) {
+      console.error("Target repository root is not a directory");
+      return 1;
+    }
   }
 
   let schema;
@@ -742,6 +815,7 @@ function run(file) {
   let errors;
   try {
     errors = validateDocument(findings, schema);
+    if (targetRoot !== null) errors.push(...validateTargetPaths(findings, targetRoot));
   } catch {
     console.error("Failed to validate findings JSON: unexpected validation error");
     return 1;
@@ -764,10 +838,12 @@ module.exports = {
   WINDOWS_RESERVED_COMPONENT,
   collect,
   collectFindingSemanticErrors,
+  collectFindingTargetPaths,
   collectSchemaErrors,
   hasVisibleProse,
   isSafeRelativeSourcePath,
   validateDocument,
+  validateTargetPaths,
 };
 
-if (require.main === module) process.exit(run(process.argv[2]));
+if (require.main === module) process.exit(run(process.argv[2], process.argv.slice(3)));

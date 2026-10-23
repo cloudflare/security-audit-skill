@@ -99,12 +99,12 @@ function errorsFor(value) {
 }
 
 function runCli(contents, options = {}) {
-  const { nodeArgs = [], timeout = CLI_TIMEOUT_MS } = options;
+  const { nodeArgs = [], cliArgs = [], timeout = CLI_TIMEOUT_MS } = options;
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "validate-findings-"));
   const findingsPath = path.join(directory, "findings.json");
   try {
     fs.writeFileSync(findingsPath, contents);
-    return spawnSync(process.execPath, [...nodeArgs, validatorPath, findingsPath], {
+    return spawnSync(process.execPath, [...nodeArgs, validatorPath, findingsPath, ...cliArgs], {
       encoding: "utf8",
       timeout,
     });
@@ -649,4 +649,63 @@ test("keeps shared helpers aligned with the coverage-ledger validator", () => {
       `prose verdict diverges for ${JSON.stringify(value)}`,
     );
   }
+});
+
+test("--target ground-truths claimed trace, evidence, and remediation paths", { skip: !HAS_SAFE_INPUT_OPEN }, () => {
+  const targetDir = fs.mkdtempSync(path.join(os.tmpdir(), "findings-target-"));
+  try {
+    fs.mkdirSync(path.join(targetDir, "src"), { recursive: true });
+    fs.writeFileSync(path.join(targetDir, "src", "handler.c"), "// handler\n");
+    fs.writeFileSync(path.join(targetDir, "src", "model.c"), "// model\n");
+    fs.writeFileSync(path.join(targetDir, "src", "store.c"), "// store\n");
+
+    const pass = runCli(JSON.stringify([confirmed()]), { cliArgs: ["--target", targetDir] });
+    assert.equal(pass.status, 0, cliOutput(pass));
+    assert.match(pass.stdout, /PASS: 1 findings valid/);
+
+    const phantom = confirmed();
+    phantom.trace[0].file = "src/never-read.c";
+    const phantomResult = runCli(JSON.stringify([phantom]), { cliArgs: ["--target", targetDir] });
+    assert.equal(phantomResult.status, 1);
+    assert.match(cliOutput(phantomResult), /trace\[0\].file.*does not exist under the target repository/);
+
+    const phantomEvidence = confirmed();
+    phantomEvidence.evidence[0].file = "src/phantom.c";
+    const evidenceResult = runCli(JSON.stringify([phantomEvidence]), { cliArgs: ["--target", targetDir] });
+    assert.equal(evidenceResult.status, 1);
+    assert.match(cliOutput(evidenceResult), /evidence\[0\].file.*does not exist under the target repository/);
+
+    const phantomRemediation = confirmed();
+    phantomRemediation.remediation.code_changes = [{ file_name: "src/missing.c", fixed_code: "x" }];
+    const remediationResult = runCli(JSON.stringify([phantomRemediation]), { cliArgs: ["--target", targetDir] });
+    assert.equal(remediationResult.status, 1);
+    assert.match(cliOutput(remediationResult), /code_changes\[0\].file_name.*does not exist under the target repository/);
+  } finally {
+    fs.rmSync(targetDir, { recursive: true, force: true });
+  }
+});
+
+test("--target does not ground-truth rejected findings", { skip: !HAS_SAFE_INPUT_OPEN }, () => {
+  const targetDir = fs.mkdtempSync(path.join(os.tmpdir(), "findings-target-"));
+  try {
+    const rejectedFinding = rejected();
+    rejectedFinding.trace[0].file = "src/never-existed.c";
+    rejectedFinding.evidence[0].file = "src/never-existed.c";
+    const result = runCli(JSON.stringify([rejectedFinding]), { cliArgs: ["--target", targetDir] });
+    assert.equal(result.status, 0, cliOutput(result));
+  } finally {
+    fs.rmSync(targetDir, { recursive: true, force: true });
+  }
+});
+
+test("--target rejects missing roots and unknown arguments", { skip: !HAS_SAFE_INPUT_OPEN }, () => {
+  const missing = runCli(JSON.stringify([confirmed()]), {
+    cliArgs: ["--target", path.join(os.tmpdir(), "no-such-repository-root")],
+  });
+  assert.equal(missing.status, 1);
+  assert.match(cliOutput(missing), /Target repository root could not be opened/);
+
+  const unknown = runCli(JSON.stringify([confirmed()]), { cliArgs: ["--bogus"] });
+  assert.equal(unknown.status, 1);
+  assert.match(cliOutput(unknown), /Unknown argument/);
 });
