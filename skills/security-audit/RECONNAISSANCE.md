@@ -58,7 +58,7 @@ Add focused reconnaissance agents for materially distinct deployment modes or su
 
 ## Prior-run input
 
-Before selecting work, the parent reads every available prior `coverage-ledger.json` and `findings.json` for the same repo:
+Before selecting work, the parent reads every compatible prior `coverage-ledger.json` and `findings.json`, as defined under Coverage and prior runs in `SKILL.md`. A shared repo name alone never makes a run compatible:
 
 - Compare the source locations, controls, conditions, and source-derived identity for every prior record and unit against the current source.
 - Carry an unchanged prior `confirmed` record into the current candidate set, with the same fingerprint, only when its relevant source, conditions, and qualifying evidence still apply. Link it to a current `planned` unit with `prior_status: "prior_confirmed_same_source"` and put only that root cause on the hunter exclusion list. The Phase 3 verifier that re-verifies the carried record becomes that unit's assignment owner; its source re-check is the unit's first check and moves the unit to `candidate` with the carried fingerprint.
