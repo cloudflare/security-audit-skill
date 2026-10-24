@@ -25,6 +25,8 @@ Use `confirmed` only when source evidence and bounded validation establish the f
 > **Data-isolation and lifecycle targets** (multi-tenant stores, caches/search, object links, analytics, export/backup, migration, deletion, retention, or restore): use [DATA-ISOLATION-AND-LIFECYCLE.md](DATA-ISOLATION-AND-LIFECYCLE.md).
 >
 > **Desktop, mobile, and local-IPC targets** (native apps, deep links, webview bridges, exported components, privileged helpers, local daemons, Unix sockets/XPC/Binder/D-Bus): use [DESKTOP-MOBILE-AND-LOCAL-IPC.md](DESKTOP-MOBILE-AND-LOCAL-IPC.md).
+>
+> **Cryptography and key-management targets** (encryption at rest or in transit, signature and MAC schemes, cryptographic randomness, password hashing, token generation, TLS/certificate verification, key exchange, or secret lifecycle): use the cipher-mode, randomness/KDF, signature/MAC, TLS-validation, and key-lifecycle classes in [CRYPTOGRAPHY-AND-KEY-MANAGEMENT.md](CRYPTOGRAPHY-AND-KEY-MANAGEMENT.md).
 
 **Injection** (subagent_type: `general`)
 Trace untrusted input from entry point to dangerous sink. What counts as a "dangerous sink" depends on the application:
@@ -60,6 +62,7 @@ For complex access models, split into separate agents for auth bypass vs authori
 - Timing side-channels on secret comparison
 - Misuse of crypto primitives (ECB mode, unauthenticated encryption, static IVs, etc.)
 - What happens when crypto operations fail? Does the error path fall back to no-crypto?
+- Cryptographic algorithm, cipher mode, randomness, signature/MAC, TLS, and secret-lifecycle classes — covered by the [CRYPTOGRAPHY-AND-KEY-MANAGEMENT.md](CRYPTOGRAPHY-AND-KEY-MANAGEMENT.md) companion blocks when selected
 
 **Business logic** (subagent_type: `general`)
 Hunt logic errors by hand: standard scanners cannot find them, and they yield high-impact findings. For each major workflow:

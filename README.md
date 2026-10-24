@@ -39,6 +39,7 @@ Multiple runs against the same repo are additive. The skill uses prior ledgers a
 | `RESOURCE-EXHAUSTION-AND-AVAILABILITY.md` | Shared resource, quota, queue, worker, and operator-spend hunting classes |
 | `DATA-ISOLATION-AND-LIFECYCLE.md` | Tenant isolation, cache, search, export, backup, migration, deletion, and restore hunting classes |
 | `DESKTOP-MOBILE-AND-LOCAL-IPC.md` | Native app, deep-link, webview, exported-component, helper, daemon, and local-IPC hunting classes |
+| `CRYPTOGRAPHY-AND-KEY-MANAGEMENT.md` | Cryptographic algorithm, cipher mode, randomness, signature, MAC, TLS, and key-lifecycle hunting classes |
 | `VALIDATION-AND-REPORTING.md` | Phases 3–6 candidate validation, structured output, record verification, and reporting |
 | `report-schema.json` | JSON schema for all three `findings.json` verdicts |
 | `validate-findings.cjs` | Zero-dependency validator for `findings.json` in Phases 4 and 5 |
