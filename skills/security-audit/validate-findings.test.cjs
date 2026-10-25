@@ -302,6 +302,12 @@ test("bounds canonical uniqueness keys and Set storage", () => {
     .some((error) => error.includes("canonical uniqueness set exceeds")));
 });
 
+test("rejects an oversized object in the parsed document", () => {
+  const finding = confirmed();
+  finding.extra = Object.fromEntries(Array.from({ length: LIMITS.objectFields + 1 }, (_, index) => [`k${index}`, null]));
+  assert(errorsFor([finding]).some((error) => error.includes(`exceeds ${LIMITS.objectFields} object fields`)));
+});
+
 test("requires findings to be sorted by fingerprint", () => {
   const first = confirmed();
   const second = rejected();
@@ -521,6 +527,27 @@ test("CLI rejects an oversized array without an exception trace", () => {
   assert.doesNotMatch(output, /RangeError|Maximum call stack|heap out of memory/i);
 });
 
+test("CLI rejects an oversized object without an exception trace", () => {
+  const fields = Array.from({ length: LIMITS.objectFields + 1 }, (_, index) => `"field${index}":null`);
+  const result = runCli(`[{${fields.join(",")}}]`);
+  const output = cliOutput(result);
+  assert.equal(result.status, 1, output);
+  assert.match(output, new RegExp(`${LIMITS.objectFields} field object limit`));
+  assert.doesNotMatch(output, /RangeError|Maximum call stack|heap out of memory/i);
+});
+
+test("CLI boundary object at the field limit reaches schema validation", () => {
+  const fields = [
+    "\"verdict\":\"confirmed\"",
+    ...Array.from({ length: LIMITS.objectFields - 1 }, (_, index) => `"field${index}":null`),
+  ];
+  const result = runCli(`[{${fields.join(",")}}]`);
+  const output = cliOutput(result);
+  assert.equal(result.status, 1, output);
+  assert.match(output, /unexpected field/);
+  assert.doesNotMatch(output, /field object limit/);
+});
+
 test("checks pattern and branch invariants", () => {
   rejectMutation(rejected, (finding) => { finding.fingerprint = "not stable"; });
   rejectMutation(needsValidation, (finding) => {
@@ -588,7 +615,7 @@ test("keeps shared helpers aligned with the coverage-ledger validator", () => {
   const sharedLimitKeys = Object.keys(findingsModule.LIMITS)
     .filter((key) => Object.prototype.hasOwnProperty.call(ledgerModule.LIMITS, key))
     .sort();
-  assert.deepEqual(sharedLimitKeys, ["inputBytes", "nestingDepth", "validationErrors"]);
+  assert.deepEqual(sharedLimitKeys, ["inputBytes", "nestingDepth", "objectFields", "validationErrors"]);
   for (const key of sharedLimitKeys) {
     assert.equal(findingsModule.LIMITS[key], ledgerModule.LIMITS[key], `LIMITS.${key}`);
   }

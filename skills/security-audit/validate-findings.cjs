@@ -43,6 +43,7 @@ const LIMITS = Object.freeze({
   inputBytes: 5 * 1024 * 1024,
   nestingDepth: 64,
   arrayItems: 1000,
+  objectFields: 1000,
   canonicalKeyBytes: 1024 * 1024,
   uniqueSetBytes: 5 * 1024 * 1024,
   validationErrors: 100,
@@ -231,6 +232,9 @@ function collectDataLimitErrors(value, location = "$data") {
       }
     } else {
       const keys = Object.keys(current.value);
+      if (keys.length > LIMITS.objectFields) {
+        return [escapeUnsafeDiagnosticCharacters(`${current.location}: exceeds ${LIMITS.objectFields} object fields`)];
+      }
       for (let index = keys.length - 1; index >= 0; index--) {
         const key = keys[index];
         const child = current.value[key];
@@ -397,6 +401,7 @@ function validate(value, schema, p, errors) {
       if (!hasOwn(value, req)) errors.push(`${p}: missing required field ${safeQuote(req)}`);
     }
     for (const key of Object.keys(value)) {
+      if (errors.length >= LIMITS.validationErrors) break;
       if (hasOwn(schema, "properties") && hasOwn(schema.properties, key)) {
         validate(value[key], schema.properties[key], propertyPath(p, key), errors);
       } else if (hasOwn(schema, "additionalProperties") && schema.additionalProperties === false) {
@@ -677,7 +682,16 @@ function enforceJsonTextLimits(contents) {
     }
 
     if (character === "\"") {
-      markArrayItem();
+      const container = containers[containers.length - 1];
+      if (container && container.type === "object" && container.expectsKey) {
+        container.expectsKey = false;
+        container.fields++;
+        if (container.fields > LIMITS.objectFields) {
+          throw new JsonStructureError(`input exceeds ${LIMITS.objectFields} field object limit`);
+        }
+      } else {
+        markArrayItem();
+      }
       inString = true;
     } else if (character === "[" || character === "{") {
       markArrayItem();
@@ -688,12 +702,15 @@ function enforceJsonTextLimits(contents) {
         type: character === "[" ? "array" : "object",
         expectsItem: character === "[",
         items: 0,
+        fields: 0,
+        expectsKey: character === "{",
       });
     } else if (character === "]" || character === "}") {
       containers.pop();
     } else if (character === ",") {
       const container = containers[containers.length - 1];
       if (container && container.type === "array") container.expectsItem = true;
+      if (container && container.type === "object") container.expectsKey = true;
     } else if (!/\s/.test(character)) {
       markArrayItem();
     }
