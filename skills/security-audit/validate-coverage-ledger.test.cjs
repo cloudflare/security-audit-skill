@@ -198,6 +198,36 @@ test("text preflight rejects malformed structural truncation cleanly", () => {
   assert.throws(() => preflightJsonText("[{\"field\":1]"), /mismatched JSON containers/);
 });
 
+test("text preflight rejects duplicate object keys instead of keeping the last one", () => {
+  const contents = JSON.stringify([unit()]);
+  assert.doesNotThrow(() => preflightJsonText(contents));
+
+  for (const duplicate of [
+    "\"status\":\"covered\",\"status\":",
+    "\"st\\u0061tus\":\"covered\",\"status\":",
+  ]) {
+    assert.throws(
+      () => preflightJsonText(contents.replace("\"status\":", duplicate)),
+      /duplicate object key "status"/,
+    );
+  }
+  assert.throws(
+    () => preflightJsonText(contents.replace("\"surface\":\"src", "\"surface\":\"other\",\"surface\":\"src")),
+    /duplicate object key "surface"/,
+  );
+  assert.throws(() => preflightJsonText("[{\"\\u001b\":1,\"\\u001b\":2}]"), /duplicate object key "\\u001b"/);
+
+  assert.doesNotThrow(() => preflightJsonText("[{\"a\":1,\"A\":1,\"\\u00e9\":1,\"e\\u0301\":1}]"));
+  assert.doesNotThrow(() => preflightJsonText("[{\"a\":{\"a\":1}},{\"a\":[{\"a\":1},{\"a\":1}]}]"));
+  assert.doesNotThrow(() => preflightJsonText("[{\"a\":\"a\",\"b\":\"a\"}]"));
+
+  if (HAS_SAFE_INPUT_OPEN) {
+    const result = runCli(contents.replace("\"status\":", "\"status\":\"covered\",\"status\":"));
+    assert.equal(result.status, 1, cliOutput(result));
+    assert.match(result.stderr, /duplicate object key "status"/);
+  }
+});
+
 test("derives collision-free canonical IDs from exact UTF-8 references", () => {
   assert.equal(encodeCanonicalRef("route:POST /users"), "route%3APOST%20%2Fusers");
   assert.notEqual(encodeCanonicalRef("route name"), encodeCanonicalRef("route-name"));

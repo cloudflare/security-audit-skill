@@ -144,6 +144,7 @@ function preflightJsonText(contents) {
   let inString = false;
   let escaped = false;
   let totalValues = 0;
+  let keyStart = -1;
 
   function fail(message) {
     throw new JsonStructureError(`input ${message}`);
@@ -184,7 +185,7 @@ function preflightJsonText(contents) {
     countValue();
   }
 
-  function beginString() {
+  function beginString(quoteIndex) {
     const container = currentContainer();
     if (container && container.type === "object" &&
         (container.state === "firstKeyOrEnd" || container.state === "key")) {
@@ -193,10 +194,23 @@ function preflightJsonText(contents) {
         fail(`exceeds ${LIMITS.objectFields} field object limit`);
       }
       container.state = "colon";
+      keyStart = quoteIndex + 1;
     } else {
       beginValue();
     }
     inString = true;
+  }
+
+  function endKey(end) {
+    let key;
+    try {
+      key = JSON.parse(`"${contents.slice(keyStart, end)}"`);
+    } catch {
+      return;
+    }
+    const container = currentContainer();
+    if (container.keys.has(key)) fail(`has duplicate object key ${safeQuote(key)}`);
+    container.keys.add(key);
   }
 
   function beginContainer(type) {
@@ -206,7 +220,7 @@ function preflightJsonText(contents) {
     }
     containers.push(type === "array"
       ? { type, state: "firstValueOrEnd", items: 0, topLevel: containers.length === 0 }
-      : { type, state: "firstKeyOrEnd", fields: 0 });
+      : { type, state: "firstKeyOrEnd", fields: 0, keys: new Set() });
   }
 
   function closeContainer(type) {
@@ -238,13 +252,17 @@ function preflightJsonText(contents) {
         escaped = true;
       } else if (character === "\"") {
         inString = false;
+        if (keyStart !== -1) {
+          endKey(index);
+          keyStart = -1;
+        }
       }
       continue;
     }
     if (isWhitespace(character)) continue;
 
     if (character === "\"") {
-      beginString();
+      beginString(index);
     } else if (character === "[") {
       beginContainer("array");
     } else if (character === "{") {
