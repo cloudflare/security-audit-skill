@@ -255,6 +255,17 @@ test("validates assignment block maps", () => {
   });
   assert(errorsFor([overlap]).some((error) => error.includes("also selected")));
 
+  const ordinaryExcluded = unit({
+    excluded_blocks: [{ block: "ATTACK-CLASSES.md#Access control", reason: "Claimed irrelevant." }],
+  });
+  assert.deepEqual(errorsFor([ordinaryExcluded]), [
+    "$[0].excluded_blocks[0].block: block is also the ordinary attack-class block",
+  ]);
+  assert.deepEqual(errorsFor([unit({
+    ordinary_attack_class_block: null,
+    excluded_blocks: [{ block: "ATTACK-CLASSES.md#Access control", reason: "No ordinary block applies." }],
+  })]), []);
+
   const noReason = unit({ excluded_blocks: [{ block: "AI-AND-LLM.md#Tool calls", reason: "" }] });
   assert(errorsFor([noReason]).some((error) => error.includes("reason")));
 });

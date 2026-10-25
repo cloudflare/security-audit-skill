@@ -700,6 +700,13 @@ function collectUnitErrors(unit, index) {
       }
     });
   }
+  if (typeof unit.ordinary_attack_class_block === "string" && Array.isArray(unit.excluded_blocks)) {
+    unit.excluded_blocks.forEach((entry, blockIndex) => {
+      if (isObject(entry) && entry.block === unit.ordinary_attack_class_block) {
+        errors.push(`${base}.excluded_blocks[${blockIndex}].block: block is also the ordinary attack-class block`);
+      }
+    });
+  }
 
   if (!PRIOR_STATUSES.has(unit.prior_status)) errors.push(`${base}.prior_status: invalid value ${safeQuote(unit.prior_status)}`);
   if (!STATUSES.has(unit.status)) errors.push(`${base}.status: invalid value ${safeQuote(unit.status)}`);
