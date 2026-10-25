@@ -521,6 +521,43 @@ test("CLI rejects an oversized array without an exception trace", () => {
   assert.doesNotMatch(output, /RangeError|Maximum call stack|heap out of memory/i);
 });
 
+test("CLI rejects duplicate object keys instead of keeping the last one", { skip: !HAS_SAFE_INPUT_OPEN }, () => {
+  const valid = JSON.stringify([rejected()]);
+  assert.equal(runCli(valid).status, 0, cliOutput(runCli(valid)));
+
+  for (const duplicate of [
+    "\"verdict\":\"needs_validation\",\"verdict\":",
+    "\"verd\\u0069ct\":\"needs_validation\",\"verdict\":",
+  ]) {
+    const result = runCli(valid.replace("\"verdict\":", duplicate));
+    assert.equal(result.status, 1, cliOutput(result));
+    assert.match(result.stderr, /duplicate object key "verdict"/);
+  }
+
+  const nested = runCli(valid.replace("\"line\":10", "\"line\":0,\"line\":10"));
+  assert.equal(nested.status, 1, cliOutput(nested));
+  assert.match(nested.stderr, /duplicate object key "line"/);
+
+  const control = runCli(valid.replace("\"reason\":", `"x\\u001b":1,"x\\u001b":1,"reason":`));
+  assert.equal(control.status, 1, cliOutput(control));
+  assert.match(control.stderr, /\\u001b/);
+  assertNoInjectedControlBytes(control.stderr);
+});
+
+test("CLI keeps distinct decoded keys and identical keys in separate objects", { skip: !HAS_SAFE_INPUT_OPEN }, () => {
+  const finding = confirmed();
+  finding.execution.payloads = [{}];
+  const separateObjects = JSON.stringify([finding]);
+  const result = runCli(separateObjects.replace("[{}]", "[{\"a\":1,\"A\":1,\"\\u00e9\":1,\"e\\u0301\":1}]"));
+  assert.equal(result.status, 1, cliOutput(result));
+  assert.doesNotMatch(result.stderr, /duplicate object key/);
+  assert.match(result.stderr, /payloads\[0\]: expected string/);
+
+  const findings = [rejected(), { ...rejected(), fingerprint: "src-router-auth-bypass-2" }];
+  const sameKeys = runCli(JSON.stringify(findings));
+  assert.equal(sameKeys.status, 0, cliOutput(sameKeys));
+});
+
 test("checks pattern and branch invariants", () => {
   rejectMutation(rejected, (finding) => { finding.fingerprint = "not stable"; });
   rejectMutation(needsValidation, (finding) => {

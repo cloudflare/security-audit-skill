@@ -652,6 +652,21 @@ function enforceJsonTextLimits(contents) {
   const containers = [];
   let inString = false;
   let escaped = false;
+  let keyStart = -1;
+
+  function checkObjectKey(end) {
+    const container = containers[containers.length - 1];
+    let key;
+    try {
+      key = JSON.parse(`"${contents.slice(keyStart, end)}"`);
+    } catch {
+      return;
+    }
+    if (container.keys.has(key)) {
+      throw new JsonStructureError(`input has duplicate object key ${safeQuote(key)}`);
+    }
+    container.keys.add(key);
+  }
 
   function markArrayItem() {
     const container = containers[containers.length - 1];
@@ -672,11 +687,20 @@ function enforceJsonTextLimits(contents) {
         escaped = true;
       } else if (character === "\"") {
         inString = false;
+        if (keyStart !== -1) {
+          checkObjectKey(index);
+          keyStart = -1;
+        }
       }
       continue;
     }
 
     if (character === "\"") {
+      const container = containers[containers.length - 1];
+      if (container && container.type === "object" && container.expectsKey) {
+        container.expectsKey = false;
+        keyStart = index + 1;
+      }
       markArrayItem();
       inString = true;
     } else if (character === "[" || character === "{") {
@@ -684,16 +708,15 @@ function enforceJsonTextLimits(contents) {
       if (containers.length >= LIMITS.nestingDepth) {
         throw new JsonStructureError(`input exceeds ${LIMITS.nestingDepth} level nesting depth limit`);
       }
-      containers.push({
-        type: character === "[" ? "array" : "object",
-        expectsItem: character === "[",
-        items: 0,
-      });
+      containers.push(character === "["
+        ? { type: "array", expectsItem: true, items: 0 }
+        : { type: "object", expectsKey: true, keys: new Set() });
     } else if (character === "]" || character === "}") {
       containers.pop();
     } else if (character === ",") {
       const container = containers[containers.length - 1];
       if (container && container.type === "array") container.expectsItem = true;
+      if (container && container.type === "object") container.expectsKey = true;
     } else if (!/\s/.test(character)) {
       markArrayItem();
     }
