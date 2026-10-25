@@ -13,14 +13,15 @@ Before launch, the parent changes assigned units to `in_progress`, sets a canoni
 Every hunter prompt contains these parts in this order:
 
 1. A two-sentence role preamble: the hunter's goal is to find source-grounded security invariant failures in its assigned units, and it must return exactly one JSON object matching the structured-result contract at the end of this prompt.
-2. `architecture.md` verbatim.
-3. Assigned coverage IDs, subsystem, boundary, repository-relative starting paths, and each unit's assignment block map from `coverage-ledger.json`.
-4. The exact selected blocks, copied verbatim: each selected ordinary attack-class block from `ATTACK-CLASSES.md`, and from each selected companion its `Core discipline`, each chosen attack-class subsection, `Universal moves`, and `Validation rules`. Ordinary blocks are self-contained and carry no companion-style `Core discipline`, `Universal moves`, or `Validation rules` sections. Do not send block or companion names alone.
-5. Explicit excluded ordinary and companion blocks with a reason for each exclusion.
-6. The core hunting method below, followed by the promotion procedure block.
-7. The core validation rules below.
-8. Carried same-source prior confirmed exclusions, each limited to fingerprint, title, and root cause, plus peer-owned current coverage IDs that this hunter must not duplicate.
-9. The unique scratch/artifact paths, safe agent ID, predeclared promotion allowlist and byte limits, and the structured-result contract, including the Structured hunter result block below and the `confirmed` and `needs_validation` branches of `report-schema.json` copied verbatim.
+2. The untrusted-content block from `SKILL.md`, copied verbatim.
+3. `architecture.md` verbatim.
+4. Assigned coverage IDs, subsystem, boundary, repository-relative starting paths, and each unit's assignment block map from `coverage-ledger.json`.
+5. The exact selected blocks, copied verbatim: each selected ordinary attack-class block from `ATTACK-CLASSES.md`, and from each selected companion its `Core discipline`, each chosen attack-class subsection, `Universal moves`, and `Validation rules`. Ordinary blocks are self-contained and carry no companion-style `Core discipline`, `Universal moves`, or `Validation rules` sections. Do not send block or companion names alone.
+6. Explicit excluded ordinary and companion blocks with a reason for each exclusion.
+7. The core hunting method below, followed by the promotion procedure block.
+8. The core validation rules below.
+9. Carried same-source prior confirmed exclusions, each limited to fingerprint, title, and root cause, plus peer-owned current coverage IDs that this hunter must not duplicate.
+10. The unique scratch/artifact paths, safe agent ID, predeclared promotion allowlist and byte limits, and the structured-result contract, including the Structured hunter result block below and the `confirmed` and `needs_validation` branches of `report-schema.json` copied verbatim.
 
 A prompt may select several companion blocks when the same path crosses several domains. Keep their constraints together. Scope is the hunter's coverage obligation, not permission to duplicate excluded work. If an unexpected different boundary appears, return it under `uncovered` so the parent creates a stable ledger unit and assigns it in the next wave.
 
@@ -220,7 +221,7 @@ Consolidate candidate entries by fingerprint and then by root cause. One root ca
 
 ## Coverage-critic waves
 
-Immediately after each hunter wave, spend the reserved invocation on one fresh `research` post-wave coverage critic. It receives `architecture.md`, the full coverage ledger including each assignment block map, current candidate fingerprints and states, and the prior-ledger gap summary. It reads source but does not write or run targets. Require exactly this JSON:
+Immediately after each hunter wave, spend the reserved invocation on one fresh `research` post-wave coverage critic. It receives the untrusted-content block from `SKILL.md` verbatim, `architecture.md`, the full coverage ledger including each assignment block map, current candidate fingerprints and states, and the prior-ledger gap summary. It reads source but does not write or run targets. Require exactly this JSON:
 
 ```json
 {
