@@ -2,7 +2,7 @@
 
 #### Attack classes — choose and split based on Phase 1
 
-Select attack classes relevant to the application type. Not every class applies to every codebase. The list below is a starting point; add application-specific classes from Phase 1 and split large codebases per subsystem. Frame work as finding, validating, fixing, and prioritizing vulnerabilities. Keep validation to source review and bounded local fixtures; do not develop payload chains, test availability on live services, or take action in shared environments.
+Select attack classes relevant to the application type. Not every class applies to every codebase. The list below is a starting point; add application-specific classes from Phase 1 and split large codebases per subsystem. Frame hunting work as finding, validating, and prioritizing vulnerabilities; fixes are designed in a separate step after validation. Keep validation to source review and bounded local fixtures; do not develop payload chains, test availability on live services, or take action in shared environments.
 
 Use `confirmed` only when source evidence and bounded validation establish the full boundary and meaningful result. Use `needs_validation` when a specific deployment, provider, platform, identity, or runtime fact is unavailable; state the missing fact and the safe owner-observed or local check that resolves it.
 

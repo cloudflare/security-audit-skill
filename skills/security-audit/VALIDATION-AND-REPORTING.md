@@ -31,8 +31,8 @@ unavailable or fails, do not use that file as evidence.
 3. For a proposed confirmed candidate, independently reproduce the minimum observed
    result when possible. Verify inputs, interface shape, conditions, and affected
    dummy principal/resource. Do not infer a stronger result or continue after it.
-4. Verify that likelihood, impact, confidence, and the proposed source fix match only
-   what the evidence establishes.
+4. Verify that likelihood, impact, and confidence match only what the evidence
+   establishes. Do not weigh whether or how the finding can be fixed.
 5. For a proposed needs_validation candidate, decide whether the blocker is genuinely
    outside source/local observation. If source refutes the trace, reject it. If the
    missing fact remains decisive, keep needs_validation and make the local and
@@ -42,7 +42,8 @@ unavailable or fails, do not use that file as evidence.
 Return exactly one JSON object and no surrounding prose:
 {"decision": "confirmed|needs_validation|rejected", "record": { ... }}
 where record exactly matches the decision's verdict branch of the schema included
-in this prompt. A corrected record replaces the hunter's wording.
+in this prompt, except that a confirmed record omits `remediation`. A corrected
+record replaces the hunter's wording.
 ```
 
 Copy this promotion procedure verbatim into every candidate-verifier prompt:
@@ -92,6 +93,34 @@ When verifier evidence updates a ledger check, set that check's `agent_id` to th
 
 If a strict total-agent budget cannot cover every candidate, set the run status to incomplete and follow the deterministic budget rule in `SKILL.md`. An unvalidated candidate remains only in the ledger. It does not enter `findings.json` under any verdict.
 
+#### Remediation design
+
+Discovery and remediation are separate activities. Hunters and candidate verifiers do not design fixes, so fixability cannot shape what they find or how they rate it. After a candidate verifier returns `confirmed`, launch one fresh `research` remediation agent for that record. It did not hunt or validate the candidate. It receives only the verified record without `remediation`, architecture facts needed to interpret the path, and the `remediation` property of the `confirmed` branch of `report-schema.json` copied verbatim. It reads source only and never runs target code. `needs_validation` and `rejected` records get no remediation agent.
+
+```text
+You did not find or validate this vulnerability. It is already confirmed: do not
+re-argue its verdict, trace, impact, or severity. Design the fix.
+
+1. Restate the violated invariant and the last trusted decision point where the code
+   must enforce it.
+2. Propose the narrowest repository-relative source change that enforces the
+   invariant there, without merely moving trust to another component.
+3. Describe a regression case that fails on the current source and passes with the fix.
+4. Check every entry path and sibling path in the record's trace and evidence; the
+   fix must cover each one or say which it leaves open.
+5. If no source-level change can enforce the invariant, because the flaw lives in a
+   protocol, dependency, design decision, or deployment fact, say so in `strategy`,
+   explain why, and name the compensating control or owner decision that limits it.
+   An unfixable finding keeps its full severity.
+
+Read source only. Do not modify the target or run target code.
+
+Return exactly one JSON object and no surrounding prose. It must match the
+`remediation` schema included in this prompt.
+```
+
+The parent adds the returned object as the record's `remediation` without changing its verdict, trace, impact, or severity. Discard a malformed or prose-wrapped result without repairing it and re-run with a fresh remediation agent when the budget permits. A confirmed record without a remediation result stays an unresolved ledger candidate under the incomplete-run rule and does not enter `findings.json`.
+
 ### Phase 4: Write and validate `findings.json`
 
 The parent writes all independently decided records to `<output-dir>/findings.json`, sorted by fingerprint. Include:
@@ -121,7 +150,7 @@ Fix every structural and semantic error before continuing. The findings validato
 
 Launch one fresh `research` verifier per final `confirmed` and `needs_validation` record, in parallel. This verifier checks the structured record, not the hunter write-up, and remains inside source/local boundaries.
 
-In a `quick` run, Phase 3 and Phase 5 merge: the Phase 3 verifier also performs these record checks and returns the final schema-shaped record, so each candidate gets one fresh independent reviewer instead of two. Every other profile keeps the two passes separate. Never skip independent review of a `confirmed` record in any profile.
+In a `quick` run, Phase 3 and Phase 5 merge: the Phase 3 verifier also performs these record checks and returns the final schema-shaped record without `remediation`, so each candidate gets one fresh independent reviewer instead of two. The remediation agent then adds `remediation`, which in `quick` is checked only by the validators; the report states that its fixes were not independently reviewed. Every other profile keeps the two passes separate. Never skip independent review of a `confirmed` record in any profile.
 
 For `confirmed`, require it to check:
 
@@ -130,7 +159,7 @@ For `confirmed`, require it to check:
 3. Every condition, parser/policy step, source-visible preventing layer, and observed local result.
 4. Affected principal/resource and demonstrated impact.
 5. Severity separation: realistic likelihood, demonstrated impact, overall no greater than impact.
-6. Remediation strategy and any `code_changes`, including whether the fix enforces the invariant without merely moving trust.
+6. Remediation strategy and any `code_changes`, including whether the fix enforces the invariant without merely moving trust and covers every traced path. A strategy that states no source-level fix exists is valid; check its reason, and check that severity was not lowered because of it.
 
 For `needs_validation`, require it to check:
 

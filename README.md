@@ -10,7 +10,7 @@ The skill runs a structured audit in six phases:
 
 1. **Reconnaissance** -- map architecture, trust boundaries, input surfaces, prior evidence, and deterministic coverage in `architecture.md` and `coverage-ledger.json`.
 2. **Coverage-led hunting** -- assign isolated hunters from ledger units, record their checks, and use coverage critics to find gaps.
-3. **Candidate validation** -- give every unique candidate to a fresh verifier that tries to disprove it.
+3. **Candidate validation** -- give every unique candidate to a fresh verifier that tries to disprove it, then give each confirmed record to a separate remediation agent that designs the fix.
 4. **Structured output** -- write `confirmed`, `needs_validation`, and `rejected` records to `findings.json` and validate them against `report-schema.json`.
 5. **Independent record verification** -- fresh agents verify final source claims. Material replacements receive another independent verifier.
 6. **Target-neutral reporting** -- derive `REPORT.md`, `FINDINGS-DETAIL.md`, and `NEEDS-VALIDATION.md` from the verified records and coverage ledger.
@@ -95,6 +95,7 @@ The skill activates automatically when the request matches its trigger (security
 - **Adversarial validation.** The agent that checks a finding is never the agent that found it.
 - **Severity requires impact.** Likelihood x impact, not deviation from a checklist.
 - **Defense-in-depth gaps are not vulnerabilities.** If Layer A prevents the attack, the absence of Layer B is a hardening note.
+- **Discovery and remediation stay separate.** Hunters and verifiers never design fixes, so fixability cannot shape what they report. A finding with no source-level fix keeps its severity.
 - **Multiple runs improve coverage.** In our test runs, a single run found roughly half of the vulnerabilities that repeated runs found in total.
 
 ## Contact
