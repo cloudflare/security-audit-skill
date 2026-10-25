@@ -490,6 +490,26 @@ test("rejects reassignment owner reuse and evidence mixing", () => {
   assert(errorsFor([unordered]).some((error) => error.includes("strictly increasing")));
 });
 
+test("allows artifact sharing within the same attempt", () => {
+  const sharedArtifact = "agents/hunter-1/artifacts/result.txt";
+
+  const attempt = archivedAttempt({
+    local_checks: [
+      localCheck("hunter-1", { artifact: sharedArtifact }),
+      localCheck("hunter-1", { artifact: sharedArtifact }),
+    ],
+  });
+
+  const value = unit({
+    attempts: [attempt],
+    wave: 2,
+    status: "in_progress",
+    agent_id: "hunter-2",
+  });
+
+  assert.deepEqual(errorsFor([value]), []);
+});
+
 test("rejects unsafe paths and malformed fingerprints", () => {
   for (const value of [
     "/etc/passwd",
