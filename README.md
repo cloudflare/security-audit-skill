@@ -104,3 +104,6 @@ Questions, feedback, or comparing notes on AI-driven security tooling: security-
 ## License
 
 MIT -- see [LICENSE](LICENSE).
+Fix typo in README
+Correct a spelling mistake, no function change.
+Create a new branch for this commit and start a pull request
