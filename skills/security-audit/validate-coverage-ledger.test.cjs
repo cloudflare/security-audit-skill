@@ -17,10 +17,9 @@ const {
 const validatorPath = path.join(__dirname, "validate-coverage-ledger.cjs");
 const CLI_TIMEOUT_MS = 5000;
 const HOSTILE_CLI_TIMEOUT_MS = 15000;
-const HAS_SAFE_INPUT_OPEN = Number.isInteger(fs.constants.O_NOFOLLOW) &&
-  fs.constants.O_NOFOLLOW !== 0 &&
-  Number.isInteger(fs.constants.O_NONBLOCK) &&
-  fs.constants.O_NONBLOCK !== 0;
+// Both validators fall back to an lstat symlink check when O_NOFOLLOW is
+// unavailable (Windows), so CLI file-input tests run on every platform.
+const HAS_SAFE_INPUT_OPEN = true;
 
 function unit(overrides = {}) {
   const canonicalRefs = overrides.canonical_refs || {
