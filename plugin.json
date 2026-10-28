@@ -1,0 +1,10 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "security-audit",
+  "description": "Source-first security review and multi-agent codebase audits",
+  "author": { "name": "Cloudflare, Inc." },
+  "homepage": "https://blog.cloudflare.com/build-your-own-vulnerability-harness",
+  "repository": "https://github.com/cloudflare/security-audit-skill",
+  "license": "MIT",
+  "keywords": ["security", "audit", "vulnerability", "skills"]
+}
