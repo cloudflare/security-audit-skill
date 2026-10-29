@@ -165,6 +165,21 @@ The high/medium discriminator: does the demonstrated result fully defeat an expl
 
 For each confirmed finding, identify the invariant the code must enforce and the narrowest source change that enforces it at the last trusted decision point. Prefer specific repository-relative changes and regression tests over generic hardening advice. The audit describes fixes; it does not modify target source.
 
+## Domain companions
+
+Read the companions relevant to the source-visible trust boundaries found during reconnaissance or focused review. Use them alongside [ATTACK-CLASSES.md](ATTACK-CLASSES.md); there is no need to read every companion for every target.
+
+- [MEMORY-SAFETY-AND-BINARY.md](MEMORY-SAFETY-AND-BINARY.md): Read when untrusted bytes cross memory-safety, FFI, binary-loader, or privileged-code boundaries.
+- [AI-AND-LLM.md](AI-AND-LLM.md): Read when models, retrieval, agent memory, tool calls, or model output participate in trust-sensitive decisions.
+- [WEB-PROTOCOL-AND-AUTH.md](WEB-PROTOCOL-AND-AUTH.md): Read when the target handles HTTP parsing, caching, sessions, or identity-protocol boundaries.
+- [CLIENT-SIDE.md](CLIENT-SIDE.md): Read when browsers render untrusted content or make trust decisions involving origins, messaging, or browser storage.
+- [SUPPLY-CHAIN-AND-RELEASE.md](SUPPLY-CHAIN-AND-RELEASE.md): Read when the target resolves dependencies, runs CI, builds or signs releases, updates software, or loads plugins.
+- [CLOUD-AND-DEPLOYMENT.md](CLOUD-AND-DEPLOYMENT.md): Read when the repository defines cloud identity, infrastructure, workload isolation, or deployment configuration.
+- [PROTOCOLS-RPC-AND-MESSAGING.md](PROTOCOLS-RPC-AND-MESSAGING.md): Read when the target handles peer identity, message interpretation, routing, replay, or delivery in protocols, RPC, or messaging.
+- [RESOURCE-EXHAUSTION-AND-AVAILABILITY.md](RESOURCE-EXHAUSTION-AND-AVAILABILITY.md): Read when untrusted input or work can exhaust shared resources, disrupt a shared service, or consume operator-owned spend.
+- [DATA-ISOLATION-AND-LIFECYCLE.md](DATA-ISOLATION-AND-LIFECYCLE.md): Read when access-controlled data crosses tenant boundaries, derived copies, export, migration, deletion, or restore paths.
+- [DESKTOP-MOBILE-AND-LOCAL-IPC.md](DESKTOP-MOBILE-AND-LOCAL-IPC.md): Read when native apps handle deep links, webview bridges, privileged helpers, or local IPC.
+
 ## Full audit workflow
 
 In full audit mode, follow all six phases in order:
