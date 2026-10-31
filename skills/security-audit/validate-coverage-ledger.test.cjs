@@ -149,6 +149,25 @@ test("accepts a complete ledger through the CLI", { skip: !HAS_SAFE_INPUT_OPEN }
   assert.match(result.stdout, /PASS: 1 coverage units valid/);
 });
 
+test("CLI rejects a second bare argument with a usage error", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "validate-coverage-ledger-args-"));
+  try {
+    const ledgerPath = path.join(directory, "coverage-ledger.json");
+    const extraPath = path.join(directory, "extra.json");
+    fs.writeFileSync(ledgerPath, JSON.stringify([unit()]));
+    fs.writeFileSync(extraPath, "this file must never be read");
+    const result = spawnSync(process.execPath, [validatorPath, ledgerPath, extraPath], {
+      encoding: "utf8",
+      timeout: CLI_TIMEOUT_MS,
+    });
+    assert.equal(result.status, 1, cliOutput(result));
+    assert.equal(result.stdout, "");
+    assert.match(result.stderr, /^Usage: node validate-coverage-ledger\.cjs\b/);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("text preflight ignores structural characters and escapes inside strings", () => {
   const value = unit({
     surface: "Route \\ slash [list] {object}, colon: quoted \"value\"",

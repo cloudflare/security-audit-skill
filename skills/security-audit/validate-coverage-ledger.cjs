@@ -805,8 +805,8 @@ function validateDocument(ledger) {
   return errors;
 }
 
-function run(file) {
-  if (!file) {
+function run(file, rest = []) {
+  if (!file || rest.length > 0) {
     console.error("Usage: node validate-coverage-ledger.cjs <path-to-coverage-ledger.json>");
     return 1;
   }
@@ -869,4 +869,7 @@ module.exports = {
   validateDocument,
 };
 
-if (require.main === module) process.exit(run(process.argv[2]));
+if (require.main === module) {
+  const args = process.argv.slice(2);
+  process.exit(run(args[0], args.slice(1)));
+}

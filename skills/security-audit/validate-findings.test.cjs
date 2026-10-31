@@ -113,6 +113,14 @@ function runCli(contents, options = {}) {
   }
 }
 
+function runCliArgs(args, options = {}) {
+  const { timeout = CLI_TIMEOUT_MS } = options;
+  return spawnSync(process.execPath, [validatorPath, ...args], {
+    encoding: "utf8",
+    timeout,
+  });
+}
+
 function cliOutput(result) {
   return `${result.stdout}${result.stderr}`;
 }
@@ -165,6 +173,97 @@ test("accepts a producer-shaped findings document through the CLI", () => {
   const result = runCli(JSON.stringify(producerShapedFindings()));
   assert.equal(result.status, 0, cliOutput(result));
   assert.match(result.stdout, /PASS: 3 findings valid/);
+});
+
+test("CLI rejects a second bare argument with a usage error", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "validate-findings-args-"));
+  try {
+    const findingsPath = path.join(directory, "findings.json");
+    const extraPath = path.join(directory, "extra.json");
+    fs.writeFileSync(findingsPath, JSON.stringify(producerShapedFindings()));
+    fs.writeFileSync(extraPath, "this file must never be read");
+    const result = runCliArgs([findingsPath, extraPath]);
+    assert.equal(result.status, 1, cliOutput(result));
+    assert.equal(result.stdout, "");
+    assert.match(result.stderr, /^Usage: node validate-findings\.cjs\b/);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("CLI rejects unknown arguments by name", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "validate-findings-args-"));
+  try {
+    const findingsPath = path.join(directory, "findings.json");
+    fs.writeFileSync(findingsPath, JSON.stringify(producerShapedFindings()));
+    const result = runCliArgs([findingsPath, "--bogus"]);
+    assert.equal(result.status, 1, cliOutput(result));
+    assert.equal(result.stdout, "");
+    assert.match(result.stderr, /^Unknown argument: --bogus/);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("CLI rejects a trailing --target without a value", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "validate-findings-args-"));
+  try {
+    const findingsPath = path.join(directory, "findings.json");
+    fs.writeFileSync(findingsPath, JSON.stringify(producerShapedFindings()));
+    const result = runCliArgs([findingsPath, "--target"]);
+    assert.equal(result.status, 1, cliOutput(result));
+    assert.equal(result.stdout, "");
+    assert.match(result.stderr, /^Missing value for --target/);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("CLI with no arguments prints usage without reading anything", () => {
+  const result = runCliArgs([]);
+  assert.equal(result.status, 1, cliOutput(result));
+  assert.equal(result.stdout, "");
+  assert.match(result.stderr, /^Usage: node validate-findings\.cjs\b/);
+});
+
+test("CLI --target accepts findings whose claimed paths exist", { skip: !HAS_SAFE_INPUT_OPEN }, () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "validate-findings-target-"));
+  try {
+    const rootPath = path.join(directory, "repo");
+    for (const file of ["src/handler.c", "src/model.c", "src/store.c"]) {
+      const filePath = path.join(rootPath, ...file.split("/"));
+      fs.mkdirSync(path.dirname(filePath), { recursive: true });
+      fs.writeFileSync(filePath, "// claimed by findings\n");
+    }
+    const findingsPath = path.join(directory, "findings.json");
+    fs.writeFileSync(findingsPath, JSON.stringify(producerShapedFindings()));
+    const result = runCliArgs([findingsPath, "--target", rootPath]);
+    assert.equal(result.status, 0, cliOutput(result));
+    assert.match(result.stdout, /PASS: 3 findings valid/);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("CLI --target rejects phantom claimed paths", { skip: !HAS_SAFE_INPUT_OPEN }, () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "validate-findings-target-"));
+  try {
+    const rootPath = path.join(directory, "repo");
+    for (const file of ["src/handler.c", "src/model.c"]) {
+      const filePath = path.join(rootPath, ...file.split("/"));
+      fs.mkdirSync(path.dirname(filePath), { recursive: true });
+      fs.writeFileSync(filePath, "// claimed by findings\n");
+    }
+    const findingsPath = path.join(directory, "findings.json");
+    fs.writeFileSync(findingsPath, JSON.stringify(producerShapedFindings()));
+    const result = runCliArgs([findingsPath, "--target", rootPath]);
+    assert.equal(result.status, 1, cliOutput(result));
+    assert.equal(result.stdout, "");
+    assert.match(result.stderr, /store\.c/);
+    assert.match(result.stderr, /does not exist/);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test("accepts empty output and each complete branch", () => {
