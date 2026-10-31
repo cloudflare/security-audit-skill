@@ -2,7 +2,8 @@
 
 /**
  * Validates findings.json against report-schema.json.
- * Usage: node validate-findings.cjs <path-to-findings.json>
+ * Usage: node validate-findings.cjs <path-to-findings.json> [--target <repo-root>]
+ * With --target, every file path claimed by a finding must exist under <repo-root>.
  *
  * This is a dependency-free interpreter for the JSON Schema keywords used by
  * report-schema.json, plus finding-specific checks that are clearer in code.
@@ -700,10 +701,70 @@ function enforceJsonTextLimits(contents) {
   }
 }
 
-function run(file) {
-  if (!file) {
-    console.error("Usage: node validate-findings.cjs <path-to-findings.json>");
+function collectClaimedSourcePaths(findings) {
+  const paths = new Set();
+  for (const finding of findings) {
+    if (!finding || typeof finding !== "object") continue;
+    for (const field of ["trace", "evidence"]) {
+      if (!Array.isArray(finding[field])) continue;
+      for (const entry of finding[field]) {
+        if (entry && typeof entry.file === "string") paths.add(entry.file);
+      }
+    }
+    if (finding.remediation && Array.isArray(finding.remediation.code_changes)) {
+      for (const change of finding.remediation.code_changes) {
+        if (change && typeof change.file_name === "string") paths.add(change.file_name);
+      }
+    }
+  }
+  return paths;
+}
+
+function collectTargetErrors(findings, targetRoot) {
+  const errors = createErrorList();
+  const root = path.resolve(targetRoot);
+  try {
+    const stat = fs.statSync(root);
+    if (!stat.isDirectory()) {
+      errors.push(`--target: ${safeQuote(targetRoot)} is not a directory`);
+      return errors;
+    }
+  } catch {
+    errors.push(`--target: target directory ${safeQuote(targetRoot)} does not exist`);
+    return errors;
+  }
+  for (const claimedPath of collectClaimedSourcePaths(findings)) {
+    const resolved = path.resolve(root, claimedPath);
+    const relative = path.relative(root, resolved);
+    if (relative.startsWith("..") || path.isAbsolute(relative)) {
+      errors.push(`--target: claimed file ${safeQuote(claimedPath)} escapes target root`);
+      continue;
+    }
+    if (!fs.existsSync(resolved)) {
+      errors.push(`--target: claimed file ${safeQuote(claimedPath)} does not exist under the target root`);
+    }
+  }
+  return errors;
+}
+
+function run(file, rest = []) {
+  if (!file || rest.some((argument, index) => index % 2 === 0 && !argument.startsWith("--"))) {
+    console.error("Usage: node validate-findings.cjs <path-to-findings.json> [--target <repo-root>]");
     return 1;
+  }
+
+  let target = null;
+  for (let index = 0; index < rest.length; index += 2) {
+    const name = rest[index];
+    if (name !== "--target") {
+      console.error(`Unknown argument: ${escapeUnsafeDiagnosticCharacters(name)}`);
+      return 1;
+    }
+    if (index + 1 >= rest.length) {
+      console.error("Missing value for --target");
+      return 1;
+    }
+    target = rest[index + 1];
   }
 
   let schema;
@@ -752,6 +813,14 @@ function run(file) {
     console.error(`FAIL: ${errors.length} validation error(s)${cap}`);
     return 1;
   }
+  if (target !== null) {
+    const targetErrors = collectTargetErrors(findings, target);
+    if (targetErrors.length > 0) {
+      for (const message of targetErrors) console.error("ERROR:", message);
+      console.error(`FAIL: ${targetErrors.length} target file error(s)`);
+      return 1;
+    }
+  }
   console.log(`PASS: ${findings.length} findings valid`);
   return 0;
 }
@@ -770,4 +839,7 @@ module.exports = {
   validateDocument,
 };
 
-if (require.main === module) process.exit(run(process.argv[2]));
+if (require.main === module) {
+  const args = process.argv.slice(2);
+  process.exit(run(args[0], args.slice(1)));
+}
