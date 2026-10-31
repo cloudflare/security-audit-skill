@@ -259,6 +259,81 @@ test("validates assignment block maps", () => {
   assert(errorsFor([noReason]).some((error) => error.includes("reason")));
 });
 
+function assignmentUnit(status) {
+  const value = unit({ status });
+  if (status !== "planned") value.agent_id = "hunter-1";
+  if (["blocked", "covered", "candidate"].includes(status)) {
+    value.reviewed_paths = ["src/router.ts"];
+    value.local_checks = [sourceCheck()];
+  }
+  if (status === "blocked") value.unresolved = ["The deployed policy is unavailable."];
+  if (status === "candidate") value.result_fingerprints = ["src-router-owner-check"];
+  return value;
+}
+
+test("requires the canonical ordinary assignment block in active coverage states", async (t) => {
+  for (const status of ["in_progress", "blocked", "covered", "candidate"]) {
+    const matching = assignmentUnit(status);
+    assert.deepEqual(errorsFor([matching]), [], status);
+    for (const block of [null, "ATTACK-CLASSES.md#Injection"]) {
+      await t.test(`${status} rejects ${block === null ? "missing" : "different"} ordinary block`, () => {
+        const value = { ...matching, ordinary_attack_class_block: block };
+        assert(errorsFor([value]).some((error) => error.includes(".ordinary_attack_class_block:")));
+      });
+    }
+  }
+});
+
+test("does not accept an ordinary assignment block only in the companion list", () => {
+  const value = assignmentUnit("in_progress");
+  value.ordinary_attack_class_block = null;
+  value.selected_companion_blocks = [value.canonical_refs.attack_class];
+  assert(errorsFor([value]).some((error) => error.includes(".ordinary_attack_class_block:")));
+});
+
+test("allows unassigned exclusions and nonordinary classes without an ordinary assignment block", () => {
+  for (const status of ["planned", "not_applicable", "out_of_scope", "deferred"]) {
+    const value = unit({
+      status,
+      ordinary_attack_class_block: null,
+      unresolved: status === "planned" ? [] : ["This unit is not assigned in the current pass."],
+    });
+    assert.deepEqual(errorsFor([value]), [], status);
+  }
+
+  for (const attackClass of ["AI-AND-LLM.md#Tool-argument injection into a downstream sink", "src/policy.ts#Custom invariant"]) {
+    const value = assignmentUnit("covered");
+    value.canonical_refs = { ...value.canonical_refs, attack_class: attackClass };
+    value.coverage_id = canonicalCoverageId(value.canonical_refs);
+    value.attack_class = attackClass.split("#")[1];
+    value.ordinary_attack_class_block = null;
+    value.selected_companion_blocks = attackClass.startsWith("AI-AND-LLM.md#")
+      ? [attackClass, "AI-AND-LLM.md#Core discipline", "AI-AND-LLM.md#Universal moves", "AI-AND-LLM.md#Validation rules"]
+      : [];
+    assert.deepEqual(errorsFor([value]), [], attackClass);
+  }
+});
+
+test("requires an ordinary assignment block when a planned unit is assigned", () => {
+  const value = unit({ ordinary_attack_class_block: null });
+  assert.deepEqual(errorsFor([value]), []);
+
+  value.status = "in_progress";
+  value.agent_id = "hunter-1";
+  assert(errorsFor([value]).some((error) => error.includes(".ordinary_attack_class_block:")));
+});
+
+test("CLI rejects covered ordinary-class evidence with the wrong assignment block", { skip: !HAS_SAFE_INPUT_OPEN }, () => {
+  const value = assignmentUnit("covered");
+  const valid = runCli(JSON.stringify([value]));
+  assert.equal(valid.status, 0, cliOutput(valid));
+
+  value.ordinary_attack_class_block = "ATTACK-CLASSES.md#Injection";
+  const invalid = runCli(JSON.stringify([value]));
+  assert.equal(invalid.status, 1, cliOutput(invalid));
+  assert.match(invalid.stderr, /\$\[0\]\.ordinary_attack_class_block:/);
+});
+
 test("requires owned artifacts for local checks and null artifacts for source checks", () => {
   const local = unit({
     status: "covered",

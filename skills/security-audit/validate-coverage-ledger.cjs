@@ -56,6 +56,7 @@ const STATUSES = new Set([
   "deferred",
 ]);
 const ATTEMPT_STATUSES = new Set(["covered", "candidate", "blocked"]);
+const ASSIGNED_STATUSES = new Set(["in_progress", "covered", "candidate", "blocked"]);
 const ATTEMPT_FIELDS = [
   "wave",
   "status",
@@ -516,6 +517,14 @@ function requireNonemptyArray(unit, field, base, errors) {
 }
 
 function validateStateInvariants(unit, base, errors) {
+  if (ASSIGNED_STATUSES.has(unit.status) && isObject(unit.canonical_refs)) {
+    const attackClass = unit.canonical_refs.attack_class;
+    if (typeof attackClass === "string" && attackClass.startsWith("ATTACK-CLASSES.md#") &&
+        unit.ordinary_attack_class_block !== attackClass) {
+      errors.push(`${base}.ordinary_attack_class_block: must match canonical_refs.attack_class for an assigned ordinary attack class`);
+    }
+  }
+
   const emptyEvidence = () => {
     requireEmptyArray(unit, "reviewed_paths", base, errors);
     requireEmptyArray(unit, "local_checks", base, errors);
