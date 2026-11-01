@@ -45,6 +45,10 @@ Multiple runs against the same repo are additive. The skill uses prior ledgers a
 | `validate-findings.test.cjs` | Findings-validator tests and producer-compatible fixture checks |
 | `validate-coverage-ledger.cjs` | Zero-dependency validator for `coverage-ledger.json` in Phases 1–5 |
 | `validate-coverage-ledger.test.cjs` | Coverage-ledger validator tests |
+| `validate-environment.cjs` | Fail-closed isolation gate: refuses target execution unless `HOME`, temp, and caches resolve inside the agent's `scratch/` |
+| `validate-environment.test.cjs` | Isolation-gate tests, including escape and CLI exit-code cases |
+| `host-lock.cjs` | Exclusive lock for host mutations (install, upgrade, clean, delete), so two agents cannot mutate the machine at once |
+| `host-lock.test.cjs` | Host-lock tests: contention, ownership, stale reclaim, CLI behavior |
 
 ## Installation
 
