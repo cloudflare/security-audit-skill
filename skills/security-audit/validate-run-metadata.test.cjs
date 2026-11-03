@@ -176,6 +176,49 @@ test("complete cross-check rejects candidate fingerprints missing from findings"
     .some((error) => error.includes("requires sibling coverage-ledger.json")));
 });
 
+test("complete cross-check rejects planned and in_progress ledger units", () => {
+  const complete = metadata({ run_status: "complete" });
+  const planned = {
+    ...candidateUnit(),
+    status: "planned",
+    agent_id: null,
+    reviewed_paths: [],
+    local_checks: [],
+    result_fingerprints: [],
+    unresolved: [],
+  };
+  const inProgress = { ...planned, status: "in_progress", agent_id: "hunter-1" };
+
+  for (const unit of [planned, inProgress]) {
+    const errors = errorsFor(complete, { ledger: [unit], findings: [] });
+    assert(errors.some((error) => error.includes(`status "${unit.status}" unfinished`)), unit.status);
+    assert.deepEqual(errorsFor(metadata(), { ledger: [unit], findings: [] }), [], unit.status);
+  }
+
+  for (const status of ["out_of_scope", "deferred", "not_applicable"]) {
+    const unit = { ...planned, status, unresolved: ["Outside the declared scope."] };
+    assert.deepEqual(errorsFor(complete, { ledger: [unit], findings: [] }), [], status);
+  }
+});
+
+test("CLI rejects a complete run with a planned ledger unit", { skip: !HAS_SAFE_INPUT_OPEN }, () => {
+  const planned = {
+    ...candidateUnit(),
+    status: "planned",
+    agent_id: null,
+    reviewed_paths: [],
+    local_checks: [],
+    result_fingerprints: [],
+    unresolved: [],
+  };
+  const result = runCli({
+    "run-metadata.json": JSON.stringify(metadata({ run_status: "complete" })),
+    "coverage-ledger.json": JSON.stringify([planned]),
+  });
+  assert.equal(result.status, 1, cliOutput(result));
+  assert.match(result.stderr, /status "planned" unfinished/);
+});
+
 test("in_progress metadata does not require sibling ledger cross-check", () => {
   const ledger = [candidateUnit()];
   assert.deepEqual(errorsFor(metadata(), { ledger, findings: [], completeRequiresLedger: true }), []);

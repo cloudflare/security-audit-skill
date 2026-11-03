@@ -6,7 +6,8 @@
  *
  * When run_status is "complete", sibling coverage-ledger.json in the same
  * directory is required. Candidate fingerprints on that ledger must each
- * appear in sibling findings.json (treated as empty if that file is absent).
+ * appear in sibling findings.json (treated as empty if that file is absent),
+ * and no ledger unit may still be "planned" or "in_progress".
  */
 
 const fs = require("node:fs");
@@ -42,6 +43,8 @@ const INCOMPLETE_REASONS = new Set([
   "critic_budget_exhausted",
   "validation_budget_exhausted",
 ]);
+// Ledger statuses that mean an in-scope unit has not been audited yet.
+const UNFINISHED_UNIT_STATUSES = new Set(["planned", "in_progress"]);
 const EXECUTION_POLICY = "sandboxed-source-and-local-only";
 const VISIBLE_CONTENT = /[^\p{White_Space}\p{Cc}\p{Cf}\p{Default_Ignorable_Code_Point}]/u;
 const PATH_FORBIDDEN_CHARACTER = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}]/u;
@@ -364,6 +367,12 @@ function validateCompleteCrossCheck(metadata, options, errors) {
   const fingerprints = collectFindingFingerprints(findings === undefined ? [] : findings);
 
   options.ledger.forEach((unit, index) => {
+    if (isObject(unit) && UNFINISHED_UNIT_STATUSES.has(unit.status)) {
+      errors.push(
+        `coverage-ledger.json[${index}].status: complete run cannot leave in-scope unit with status ${safeQuote(unit.status)} unfinished`,
+      );
+      return;
+    }
     if (!isObject(unit) || unit.status !== "candidate") return;
     if (!Array.isArray(unit.result_fingerprints)) return;
     unit.result_fingerprints.forEach((fingerprint, fingerprintIndex) => {
@@ -560,6 +569,7 @@ module.exports = {
   PATH_FORBIDDEN_CHARACTER,
   PROFILES,
   RUN_STATUSES,
+  UNFINISHED_UNIT_STATUSES,
   UNSAFE_DIAGNOSTIC_CHARACTER,
   VISIBLE_CONTENT,
   WINDOWS_RESERVED_COMPONENT,
