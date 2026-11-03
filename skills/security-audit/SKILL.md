@@ -114,6 +114,8 @@ During full audit setup, pick a profile from the user's request or propose one f
 
 A **scoped run** audits a subset: named paths, one subsystem, one companion domain, or the diff between two source refs. Seed ledger units only for in-scope surfaces and record everything else as `out_of_scope` — never as `covered`. A scoped or `quick` run must present itself as partial coverage.
 
+A finished `quick` or scoped pass that writes Phase 6 artifacts and passes the validators records `run_status: "complete"`. That value means the declared profile finished, not that the target was exhaustively covered. `REPORT.md` still has to disclose the partial coverage. Use `incomplete` only with one of the exact budget reasons below.
+
 Profiles change breadth and redundancy, never the evidence bar. Do not scale away the candidate gate, the source/local execution boundary, `needs_validation` discipline, schema validation, or independent verification of `confirmed` records.
 
 #### Cost budget
@@ -172,11 +174,11 @@ In full audit mode, follow all six phases in order:
 1. **Reconnaissance** — map the source, trust boundaries, local build paths, companion selections, prior evidence, and initial deterministic coverage ledger with [RECONNAISSANCE.md](RECONNAISSANCE.md).
 2. **Coverage-led hunting waves** — assign isolated hunters from the ledger and collect structured candidate results with [HUNTING.md](HUNTING.md), [ATTACK-CLASSES.md](ATTACK-CLASSES.md), and the selected domain companions.
 3. **Candidate validation** — consolidate fingerprints and give every candidate to a fresh source verifier as defined in [VALIDATION-AND-REPORTING.md](VALIDATION-AND-REPORTING.md).
-4. **Structured output** — write all final `confirmed`, `needs_validation`, and `rejected` records to `findings.json`; validate it with `report-schema.json` and `validate-findings.cjs`, and validate the coverage claim with `validate-coverage-ledger.cjs`.
+4. **Structured output** — write all final `confirmed`, `needs_validation`, and `rejected` records to `findings.json`; validate it with `report-schema.json` and `validate-findings.cjs`, validate the coverage claim with `validate-coverage-ledger.cjs`, and validate `run-metadata.json` with `validate-run-metadata.cjs`.
 5. **Independent record verification** — use fresh agents to verify final source claims and reconcile corrections or state changes.
 6. **Target-neutral report** — derive `REPORT.md`, `FINDINGS-DETAIL.md`, and `NEEDS-VALIDATION.md` from the final records, with no live-probe instructions.
 
-Do not end the run before one of exactly two terminal states: (a) all Phase 6 artifacts are written and both validators pass, or (b) `run_status: "incomplete"` is recorded with its exact reason and the gap is disclosed in the report. Never stop mid-phase.
+Do not end the run before one of exactly two terminal states: (a) all Phase 6 artifacts are written and the findings, coverage-ledger, and run-metadata validators pass, or (b) `run_status: "incomplete"` is recorded with its exact reason (`budget_cannot_fund_reconnaissance_and_reserves`, `critic_budget_exhausted`, or `validation_budget_exhausted`) and the gap is disclosed in the report. Never stop mid-phase.
 
 ## Anti-patterns
 
