@@ -17,10 +17,10 @@ const {
 const validatorPath = path.join(__dirname, "validate-coverage-ledger.cjs");
 const CLI_TIMEOUT_MS = 5000;
 const HOSTILE_CLI_TIMEOUT_MS = 15000;
-const HAS_SAFE_INPUT_OPEN = Number.isInteger(fs.constants.O_NOFOLLOW) &&
+const HAS_SAFE_INPUT_OPEN = process.platform === "win32" || (Number.isInteger(fs.constants.O_NOFOLLOW) &&
   fs.constants.O_NOFOLLOW !== 0 &&
   Number.isInteger(fs.constants.O_NONBLOCK) &&
-  fs.constants.O_NONBLOCK !== 0;
+  fs.constants.O_NONBLOCK !== 0);
 
 function unit(overrides = {}) {
   const canonicalRefs = overrides.canonical_refs || {
@@ -644,13 +644,19 @@ test("rejects a FIFO through the CLI without blocking", { skip: process.platform
   }
 });
 
-test("rejects a symlink through the CLI", { skip: process.platform === "win32" || !HAS_SAFE_INPUT_OPEN }, () => {
+test("rejects a symlink through the CLI", { skip: !HAS_SAFE_INPUT_OPEN }, (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "validate-coverage-ledger-symlink-"));
   const targetPath = path.join(directory, "target.json");
   const symlinkPath = path.join(directory, "coverage-ledger.json");
   try {
     fs.writeFileSync(targetPath, JSON.stringify([unit()]));
-    fs.symlinkSync(targetPath, symlinkPath);
+    try {
+      fs.symlinkSync(targetPath, symlinkPath);
+    } catch (error) {
+      // Windows needs Developer Mode or elevation to create a symlink.
+      if (process.platform === "win32" && error.code === "EPERM") return t.skip("symlink creation is not permitted");
+      throw error;
+    }
     const result = spawnSync(process.execPath, [validatorPath, symlinkPath], {
       encoding: "utf8",
       timeout: CLI_TIMEOUT_MS,
@@ -662,6 +668,19 @@ test("rejects a symlink through the CLI", { skip: process.platform === "win32" |
     assert.doesNotMatch(output, /stack|at validate-coverage-ledger/i);
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("rejects a Windows device path through the CLI without blocking", { skip: process.platform !== "win32" }, () => {
+  for (const devicePath of ["\\\\.\\NUL", "\\\\?\\GLOBALROOT\\Device\\Null"]) {
+    const result = spawnSync(process.execPath, [validatorPath, devicePath], {
+      encoding: "utf8",
+      timeout: CLI_TIMEOUT_MS,
+    });
+    const output = cliOutput(result);
+    assert.notEqual(result.error && result.error.code, "ETIMEDOUT", output);
+    assert.equal(result.status, 1, output);
+    assert.match(output, /input must be a regular file/);
   }
 });
 
