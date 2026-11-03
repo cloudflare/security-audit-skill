@@ -21,6 +21,16 @@ The verdicts are distinct: `confirmed` has a complete source trace and bounded o
 
 Multiple runs against the same repo are additive. The skill uses prior ledgers and findings to target gaps, revalidate changed source, and carry forward current-source evidence without treating stale or unresolved work as covered.
 
+### SARIF export
+
+To feed audit results into GitHub code scanning, VS Code SARIF viewers, or another SARIF consumer, convert a validated `findings.json` to SARIF 2.1.0:
+
+```bash
+node findings-to-sarif.cjs <output-dir>/findings.json <output-dir>/findings.sarif
+```
+
+Confirmed findings become results. Each `trace` becomes a `codeFlow` with the sink as the result's location, `overall_severity` sets the level and the code-scanning severity, and the finding's `fingerprint` keeps an alert's identity across runs. A rule is one title at one severity, so findings that share a title but not a severity do not share a score. `needs_validation` and `rejected` records are counted in `run.properties` rather than reported as results.
+
 ## Files
 
 | File | Purpose |
@@ -45,6 +55,8 @@ Multiple runs against the same repo are additive. The skill uses prior ledgers a
 | `validate-findings.test.cjs` | Findings-validator tests and producer-compatible fixture checks |
 | `validate-coverage-ledger.cjs` | Zero-dependency validator for `coverage-ledger.json` in Phases 1–5 |
 | `validate-coverage-ledger.test.cjs` | Coverage-ledger validator tests |
+| `findings-to-sarif.cjs` | Zero-dependency converter from `findings.json` to SARIF 2.1.0 |
+| `findings-to-sarif.test.cjs` | SARIF converter tests |
 
 ## Installation
 
