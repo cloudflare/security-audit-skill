@@ -718,20 +718,49 @@ function collectUnitErrors(unit, index) {
   return errors;
 }
 
+// Windows has no O_NOFOLLOW or O_NONBLOCK. There, refuse device paths, reject a link or
+// special file by lstat, open it, and require the open handle to be the same volume and
+// file ID, so a swap between the two checks fails closed. Other platforms keep refusing.
+function openWindowsInput(file) {
+  const resolved = path.resolve(file);
+  if (resolved.startsWith("\\\\.\\") || resolved.startsWith("\\\\?\\")) {
+    throw new SafeInputError("input must be a regular file");
+  }
+  const before = fs.lstatSync(resolved, { bigint: true });
+  if (before.isSymbolicLink()) throw new SafeInputError("input must not be a symlink");
+  if (!before.isFile()) throw new SafeInputError("input must be a regular file");
+  const descriptor = fs.openSync(resolved, fs.constants.O_RDONLY);
+  try {
+    const after = fs.fstatSync(descriptor, { bigint: true });
+    if (after.ino === 0n || after.dev !== before.dev || after.ino !== before.ino) {
+      throw new SafeInputError("input changed while it was being opened");
+    }
+  } catch (error) {
+    fs.closeSync(descriptor);
+    throw error;
+  }
+  return descriptor;
+}
+
 function readFileWithinLimit(file) {
   const noFollow = fs.constants.O_NOFOLLOW;
   const nonBlock = fs.constants.O_NONBLOCK;
-  if (!Number.isInteger(noFollow) || noFollow === 0 || !Number.isInteger(nonBlock) || nonBlock === 0) {
+  const hasFlags = Number.isInteger(noFollow) && noFollow !== 0 && Number.isInteger(nonBlock) && nonBlock !== 0;
+  if (!hasFlags && process.platform !== "win32") {
     // Node exposes no race-safe fallback on these platforms, so reject all inputs.
     throw new SafeInputError("OS no-follow and nonblocking input protection is unavailable");
   }
 
   let descriptor;
-  try {
-    descriptor = fs.openSync(file, fs.constants.O_RDONLY | noFollow | nonBlock);
-  } catch (error) {
-    if (error && (error.code === "ELOOP" || error.code === "EMLINK")) throw new SafeInputError("input must not be a symlink");
-    throw error;
+  if (hasFlags) {
+    try {
+      descriptor = fs.openSync(file, fs.constants.O_RDONLY | noFollow | nonBlock);
+    } catch (error) {
+      if (error && (error.code === "ELOOP" || error.code === "EMLINK")) throw new SafeInputError("input must not be a symlink");
+      throw error;
+    }
+  } else {
+    descriptor = openWindowsInput(file);
   }
   try {
     const stat = fs.fstatSync(descriptor);
