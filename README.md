@@ -23,18 +23,13 @@ Multiple runs against the same repo are additive. The skill uses prior ledgers a
 
 ### SARIF export
 
-To feed audit results into GitHub code scanning, VS Code SARIF viewers, or any
-other SARIF consumer, convert `findings.json` to SARIF 2.1.0:
+To feed audit results into GitHub code scanning, VS Code SARIF viewers, or another SARIF consumer, convert a validated `findings.json` to SARIF 2.1.0:
 
 ```bash
 node findings-to-sarif.cjs <output-dir>/findings.json <output-dir>/findings.sarif
 ```
 
-Confirmed findings become SARIF results; each finding's `trace` maps to a
-`codeFlow` (entrypoint → sink) that GitHub code scanning renders as a
-step-through path, and `overall_severity` maps to the code-scanning severity
-buckets. Rejected findings are excluded from results but counted in
-`run.properties` so the audit trail stays intact.
+Confirmed findings become results. Each `trace` becomes a `codeFlow` with the sink as the result's location, `overall_severity` sets the level and the code-scanning severity, and the finding's `fingerprint` keeps an alert's identity across runs. A rule is one title at one severity, so findings that share a title but not a severity do not share a score. `needs_validation` and `rejected` records are counted in `run.properties` rather than reported as results.
 
 ## Files
 
