@@ -57,6 +57,19 @@ function errorsFor(value) {
   return validateDocument(value);
 }
 
+test("keeps required Wildcard coverage aligned across catalog, ledger, hunting, and budget guidance", () => {
+  const attackClasses = fs.readFileSync(path.join(__dirname, "ATTACK-CLASSES.md"), "utf8");
+  const reconnaissance = fs.readFileSync(path.join(__dirname, "RECONNAISSANCE.md"), "utf8");
+  const hunting = fs.readFileSync(path.join(__dirname, "HUNTING.md"), "utf8");
+  const skill = fs.readFileSync(path.join(__dirname, "SKILL.md"), "utf8");
+
+  assert.match(attackClasses, /Assign \*\*Wildcard\*\* to every in-scope surface, trust boundary, and subsystem, alongside—not instead of—each applicable named class/);
+  assert.match(reconnaissance, /Always include `ATTACK-CLASSES\.md#Wildcard` for every in-scope surface, boundary, and subsystem, alongside every applicable named class/);
+  assert.match(hunting, /Assign every in-scope `ATTACK-CLASSES\.md#Wildcard` unit alongside the applicable named-class units/);
+  assert.match(hunting, /including the `Wildcard` block for every assigned Wildcard unit/);
+  assert.match(skill, /Estimate hunter demand from all seeded units, including the required Wildcard unit for each in-scope surface, boundary, and subsystem/);
+});
+
 function runCli(contents, options = {}) {
   const { nodeArgs = [], timeout = CLI_TIMEOUT_MS } = options;
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "validate-coverage-ledger-"));
