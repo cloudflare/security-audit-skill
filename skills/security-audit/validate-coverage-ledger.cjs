@@ -573,6 +573,7 @@ function validateAttempts(value, unit, base, errors) {
   if (value.length > MAX_LIST_ITEMS) errors.push(`${base}.attempts: exceeds ${MAX_LIST_ITEMS} entries`);
 
   const priorOwners = new Set();
+  const priorCheckOwners = new Set();
   const priorArtifacts = new Set();
   let previousWave = 0;
   value.slice(0, MAX_LIST_ITEMS).forEach((attempt, index) => {
@@ -618,11 +619,17 @@ function validateAttempts(value, unit, base, errors) {
         if (priorOwners.has(check.agent_id)) {
           errors.push(`${attemptBase}.local_checks[${checkIndex}].agent_id: prior assignment owner evidence must remain in its earlier attempt`);
         }
+        if (priorCheckOwners.has(check.agent_id)) {
+          errors.push(`${attemptBase}.local_checks[${checkIndex}].agent_id: prior check owner evidence must remain in its earlier attempt`);
+        }
         if (typeof check.artifact === "string" && priorArtifacts.has(check.artifact)) {
           errors.push(`${attemptBase}.local_checks[${checkIndex}].artifact: artifact from an earlier attempt cannot be reused`);
         }
         if (check.method === "local" && typeof check.artifact === "string") priorArtifacts.add(check.artifact);
       });
+      for (const check of attempt.local_checks) {
+        if (isObject(check) && isSafeAgentId(check.agent_id)) priorCheckOwners.add(check.agent_id);
+      }
     }
     if (hasFreshOwner) priorOwners.add(attempt.agent_id);
   });
@@ -635,6 +642,9 @@ function validateAttempts(value, unit, base, errors) {
       if (!isObject(check)) return;
       if (priorOwners.has(check.agent_id)) {
         errors.push(`${base}.local_checks[${index}].agent_id: prior assignment owner evidence must remain in its archived attempt`);
+      }
+      if (priorCheckOwners.has(check.agent_id)) {
+        errors.push(`${base}.local_checks[${index}].agent_id: prior check owner evidence must remain in its earlier attempt`);
       }
       if (typeof check.artifact === "string" && priorArtifacts.has(check.artifact)) {
         errors.push(`${base}.local_checks[${index}].artifact: artifact from an archived attempt cannot be reused`);
