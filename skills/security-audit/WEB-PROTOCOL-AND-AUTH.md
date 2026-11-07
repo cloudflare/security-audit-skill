@@ -79,6 +79,9 @@ Recovery tokens, support/admin recovery, backup codes, device migration, and ema
 **API-key scope and resource binding**
 A key authenticates to broader tenants, resources, actions, or environments than its server-side record grants, or request parameters override those bindings. Review key lookup, prefix/full-secret verification, type confusion between publishable and secret keys, scope checks, rotation, revocation caches, and bulk endpoints.
 
+**Timing side channels in credential verification**
+Comparisons of secret values (API keys, tokens, HMAC signatures, webhook signatures) use ordinary equality operators or early-exit comparisons that can leak information through timing. Prefer established constant-time comparison functions such as Node.js crypto.timingSafeEqual(), Python hmac.compare_digest(), or Go crypto/subtle.ConstantTimeCompare(). Consider length-mismatch handling and whether an attacker can observe meaningful timing differences.
+
 **API-key exposure and unsafe transport**
 Keys appear in client bundles, URLs, redirects, logs, error paths, build artifacts, or responses accessible to a lower-trust principal. A public identifier called a key is not a secret. Confirm key type and the authority gained by disclosure.
 
