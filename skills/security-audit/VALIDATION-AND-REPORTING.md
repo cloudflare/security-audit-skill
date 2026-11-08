@@ -21,9 +21,9 @@ scratch-relative file, following the promotion procedure block included verbatim
 this prompt. You and target code never write retained artifacts. If promotion is
 unavailable or fails, do not use that file as evidence.
 
-1. Verify every trace and evidence file, positive line number, scope, and description.
-   Confirm the first entry is a real lower-trust entrypoint and the last is the
-   claimed sink or boundary effect.
+1. Verify every trace and evidence file, positive line number, quote, scope, and
+   description. Confirm the first entry is a real lower-trust entrypoint and the
+   last is the claimed sink or boundary effect.
 2. Reconstruct the strongest source-visible validation, identity, authorization,
    normalization, lifecycle, framework, and containment controls on the path.
    Where the architecture summary names a comparable baseline, note whether it
@@ -106,16 +106,16 @@ Read `report-schema.json` immediately before writing. It uses `additionalPropert
 - A `needs_validation` record uses `claimed_root_cause`, `trace`, `evidence`, `blockers`, and at least one nonempty `validation_plan.local` or `validation_plan.deployment` field. Include both only when both contexts can resolve distinct facts. It must not use severity, execution, remediation, reason, or confirmed root cause.
 - A `rejected` record uses `claimed_root_cause`, `trace`, `evidence`, and `reason`. It must not use severity, execution, remediation, blockers, validation plan, or confirmed root cause.
 
-Every record has a stable fingerprint, title, description, and repository-relative source paths. A multi-step trace begins with `entrypoint`, ends with `sink`, and uses `propagation` only between them. One-entry traces use `entrypoint` or `sink`. Overall severity cannot exceed demonstrated impact.
+Every record has a stable fingerprint, title, description, and repository-relative source paths. Every trace and evidence entry also has a `quote` copied exactly from its `file`, starting on its `line`: keep whitespace, tabs, and line endings, and do not trim, reindent, or elide. A newline in the quote continues it onto the next line. The validator checks quotes in every verdict, `rejected` included, because a rejected record suppresses its claim in future runs. A multi-step trace begins with `entrypoint`, ends with `sink`, and uses `propagation` only between them. One-entry traces use `entrypoint` or `sink`. Overall severity cannot exceed demonstrated impact.
 
 Run:
 
 ```sh
-node <skill-dir>/validate-findings.cjs <output-dir>/findings.json
+node <skill-dir>/validate-findings.cjs <output-dir>/findings.json --target <target>
 node <skill-dir>/validate-coverage-ledger.cjs <output-dir>/coverage-ledger.json
 ```
 
-Fix every structural and semantic error before continuing. The findings validator rejects input beyond 5 MiB, 1,000 top-level findings, or 64 nesting levels, and caps reported error output at 100 messages. Validator success proves format and ledger consistency only.
+Fix every structural and semantic error before continuing. The findings validator rejects input beyond 5 MiB, 1,000 top-level findings, or 64 nesting levels, and caps reported error output at 100 messages. With `--target`, it also reads each cited file inside the target, refusing symlinks and files over 64 MiB, and rejects a quote whose bytes do not start on the cited line; it reads and searches at most 512 MiB of cited source in total. Without `--target`, it checks only that each quote is present and visible. Validator success proves format, ledger consistency, and, with `--target`, that each quote exists where it is cited. It does not prove that the cited code behaves as the record claims.
 
 ### Phase 5: Verify the final records with fresh eyes
 
@@ -125,7 +125,7 @@ In a `quick` run, Phase 3 and Phase 5 merge: the Phase 3 verifier also performs 
 
 For `confirmed`, require it to check:
 
-1. Every repository-relative trace/evidence path, line, scope, and described operation.
+1. Every repository-relative trace/evidence path, line, quote, scope, and described operation.
 2. Real entry interface and exact local input shape.
 3. Every condition, parser/policy step, source-visible preventing layer, and observed local result.
 4. Affected principal/resource and demonstrated impact.

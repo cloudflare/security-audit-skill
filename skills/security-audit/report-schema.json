@@ -56,6 +56,12 @@
                   "type": "integer",
                   "minimum": 1
                 },
+                "quote": {
+                  "type": "string",
+                  "minLength": 1,
+                  "visibleContent": true,
+                  "description": "Exact source text copied from file, starting on line, without trimming, reindenting, or elision. A newline in the quote continues it onto the next line."
+                },
                 "scope": {
                   "type": "string",
                   "minLength": 1,
@@ -67,7 +73,7 @@
                   "visibleContent": true
                 }
               },
-              "required": ["kind", "file", "line", "scope", "description"],
+              "required": ["kind", "file", "line", "quote", "scope", "description"],
               "additionalProperties": false
             }
           },
@@ -86,13 +92,19 @@
                   "type": "integer",
                   "minimum": 1
                 },
+                "quote": {
+                  "type": "string",
+                  "minLength": 1,
+                  "visibleContent": true,
+                  "description": "Exact source text copied from file, starting on line, without trimming, reindenting, or elision. A newline in the quote continues it onto the next line."
+                },
                 "description": {
                   "type": "string",
                   "minLength": 1,
                   "visibleContent": true
                 }
               },
-              "required": ["file", "line", "description"],
+              "required": ["file", "line", "quote", "description"],
               "additionalProperties": false
             }
           },
@@ -290,6 +302,11 @@
                   "type": "integer",
                   "minimum": 1
                 },
+                "quote": {
+                  "type": "string",
+                  "minLength": 1,
+                  "visibleContent": true
+                },
                 "scope": {
                   "type": "string",
                   "minLength": 1,
@@ -301,7 +318,7 @@
                   "visibleContent": true
                 }
               },
-              "required": ["kind", "file", "line", "scope", "description"],
+              "required": ["kind", "file", "line", "quote", "scope", "description"],
               "additionalProperties": false
             }
           },
@@ -320,13 +337,18 @@
                   "type": "integer",
                   "minimum": 1
                 },
+                "quote": {
+                  "type": "string",
+                  "minLength": 1,
+                  "visibleContent": true
+                },
                 "description": {
                   "type": "string",
                   "minLength": 1,
                   "visibleContent": true
                 }
               },
-              "required": ["file", "line", "description"],
+              "required": ["file", "line", "quote", "description"],
               "additionalProperties": false
             }
           },
@@ -407,6 +429,11 @@
                   "type": "integer",
                   "minimum": 1
                 },
+                "quote": {
+                  "type": "string",
+                  "minLength": 1,
+                  "visibleContent": true
+                },
                 "scope": {
                   "type": "string",
                   "minLength": 1,
@@ -418,7 +445,7 @@
                   "visibleContent": true
                 }
               },
-              "required": ["kind", "file", "line", "scope", "description"],
+              "required": ["kind", "file", "line", "quote", "scope", "description"],
               "additionalProperties": false
             }
           },
@@ -437,13 +464,18 @@
                   "type": "integer",
                   "minimum": 1
                 },
+                "quote": {
+                  "type": "string",
+                  "minLength": 1,
+                  "visibleContent": true
+                },
                 "description": {
                   "type": "string",
                   "minLength": 1,
                   "visibleContent": true
                 }
               },
-              "required": ["file", "line", "description"],
+              "required": ["file", "line", "quote", "description"],
               "additionalProperties": false
             }
           },
