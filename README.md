@@ -39,12 +39,18 @@ Multiple runs against the same repo are additive. The skill uses prior ledgers a
 | `RESOURCE-EXHAUSTION-AND-AVAILABILITY.md` | Shared resource, quota, queue, worker, and operator-spend hunting classes |
 | `DATA-ISOLATION-AND-LIFECYCLE.md` | Tenant isolation, cache, search, export, backup, migration, deletion, and restore hunting classes |
 | `DESKTOP-MOBILE-AND-LOCAL-IPC.md` | Native app, deep-link, webview, exported-component, helper, daemon, and local-IPC hunting classes |
+| `CRYPTOGRAPHY-AND-SECRETS.md` | Nonce/IV reuse, malleable and unbound encryption, fail-open verification, predictable values, password and key management, certificate validation, and secret-lifecycle hunting classes |
+| `BAAS-AND-FULLSTACK-FRAMEWORKS.md` | Row-level-security and rules policies, server actions and middleware, server-to-client exposure, cache leakage, cron/webhook routes, and client-trusted billing for Supabase/Firebase and Next.js-style targets |
+| `SMART-CONTRACTS-AND-WEB3.md` | Access control, reentrancy, value accounting, oracle, signature-replay, upgrade, and cross-chain classes for on-chain code and its signers and relayers |
 | `VALIDATION-AND-REPORTING.md` | Phases 3–6 candidate validation, structured output, record verification, and reporting |
 | `report-schema.json` | JSON schema for all three `findings.json` verdicts |
 | `validate-findings.cjs` | Zero-dependency validator for `findings.json` in Phases 4 and 5 |
 | `validate-findings.test.cjs` | Findings-validator tests and producer-compatible fixture checks |
 | `validate-coverage-ledger.cjs` | Zero-dependency validator for `coverage-ledger.json` in Phases 1–5 |
 | `validate-coverage-ledger.test.cjs` | Coverage-ledger validator tests |
+| `coverage-id.cjs` | Derives a unit's canonical `coverage_id` from its `canonical_refs` with the validator's own encoder |
+| `findings-to-sarif.cjs` | Optional exporter from validated `findings.json` to SARIF 2.1.0 for code-scanning and IDE viewers |
+| `findings-to-sarif.test.cjs` | Exporter and coverage-ID helper tests |
 
 ## Installation
 
@@ -82,6 +88,17 @@ do a security review, output to ~/audits/my-project
 ```
 
 The skill activates automatically when the request matches its trigger (security audit, find vulnerabilities, pen-test the code, etc.). A direct codebase audit or pen-test request uses full audit mode. Security questions and focused vulnerability work use guidance mode unless you request report artifacts. In full audit mode, an unspecified output directory defaults to `~/security-audit-skill/<repo-name>/run-<N>`. The workflow writes inside the target repository only when you explicitly select a directory that version control ignores.
+
+### Optional SARIF export
+
+After Phase 5 passes, export confirmed findings for GitHub code scanning or an IDE viewer:
+
+```bash
+node skills/security-audit/findings-to-sarif.cjs <output-dir>/findings.json \
+  --output <output-dir>/findings.sarif
+```
+
+Pass `--include-needs-validation` to add unresolved leads as severity-free `note` results. The exporter validates its input first, never exports `rejected` records, and refuses to overwrite an existing file.
 
 ## Requirements
 

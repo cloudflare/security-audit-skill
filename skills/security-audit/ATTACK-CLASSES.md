@@ -25,6 +25,12 @@ Use `confirmed` only when source evidence and bounded validation establish the f
 > **Data-isolation and lifecycle targets** (multi-tenant stores, caches/search, object links, analytics, export/backup, migration, deletion, retention, or restore): use [DATA-ISOLATION-AND-LIFECYCLE.md](DATA-ISOLATION-AND-LIFECYCLE.md).
 >
 > **Desktop, mobile, and local-IPC targets** (native apps, deep links, webview bridges, exported components, privileged helpers, local daemons, Unix sockets/XPC/Binder/D-Bus): use [DESKTOP-MOBILE-AND-LOCAL-IPC.md](DESKTOP-MOBILE-AND-LOCAL-IPC.md).
+>
+> **Cryptography and secret-handling targets** (encryption, signatures, MACs, password storage, key derivation, token or ID generation, certificate validation, key management, custom protocols, or secret loading and rotation): use the depth classes in [CRYPTOGRAPHY-AND-SECRETS.md](CRYPTOGRAPHY-AND-SECRETS.md) in addition to the short **Cryptography and secrets** prompt below.
+>
+> **Backend-as-a-service and full-stack framework targets** (row-level-security data layers such as Supabase/Postgres or Firebase rules, Next.js-style server actions, route handlers and middleware, server-to-client data exposure, platform cron and webhook routes, or client-trusted billing): use [BAAS-AND-FULLSTACK-FRAMEWORKS.md](BAAS-AND-FULLSTACK-FRAMEWORKS.md).
+>
+> **Smart-contract and Web3 targets** (Solidity/Vyper, account-model programs, Move modules, bridges, signers, relayers, or keepers that hold or move value or authority): use [SMART-CONTRACTS-AND-WEB3.md](SMART-CONTRACTS-AND-WEB3.md).
 
 **Injection** (subagent_type: `general`)
 Trace untrusted input from entry point to dangerous sink. What counts as a "dangerous sink" depends on the application:
