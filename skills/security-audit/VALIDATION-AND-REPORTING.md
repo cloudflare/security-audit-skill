@@ -181,6 +181,16 @@ For each confirmed `medium`, `high`, or `critical` record, copy the complete sou
 
 For every unresolved record, copy the source trace, verified evidence, exact blocker, affected boundary, and each applicable bounded local or owner-observed resolution plan. Keep these as prioritized leads without severity. Do not turn them into live test guidance or assume the missing deployment fact.
 
+#### `findings.sarif` (optional)
+
+When the user asks for SARIF, GitHub code scanning, or IDE-viewer output, run this only after every Phase 5 check has passed and both validators succeed:
+
+```sh
+node <skill-dir>/findings-to-sarif.cjs <output-dir>/findings.json --output <output-dir>/findings.sarif
+```
+
+The exporter re-runs `validate-findings.cjs` and refuses invalid input. By default it exports only `confirmed` records, with severity-derived levels and the verified trace as a code flow. Add `--include-needs-validation` only when the user wants unresolved leads in the same file; those entries are always level `note`, carry no severity, and are labeled as not confirmed. `rejected` records are never exported. The exporter never changes a verdict or severity, and the output path must not already exist.
+
 HTTP is one possible native interface, not the default. A library finding may use a function call, a parser a fixture, a CLI a command, a desktop app an IPC or file action, and infrastructure a locally rendered policy. Do not require an endpoint, external account, or live environment that the target does not have.
 
 Keep the report proportional to the evidence. A clean run may have zero confirmed records. State that result and the remaining coverage/validation limits without inventing LOW findings.

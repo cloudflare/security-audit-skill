@@ -99,7 +99,7 @@ Derive `coverage_id` without lossy slugs:
 2. Encode its UTF-8 bytes with RFC 3986 percent encoding: leave only `A-Z a-z 0-9 - . _ ~` unescaped and use uppercase `%HH` for every other byte.
 3. Join encoded `surface`, `boundary`, `subsystem`, and `attack_class` references with `::`; append encoded `lifecycle` when present.
 
-Use the fixed canonical value `profile/quick/all-in-scope-subsystems` for the quick profile's coarsened subsystem dimension. Do not include wave number, agent, verdict, severity, or line number in a reference or ID. Sort units lexicographically by `coverage_id` before each assignment. Fail on every duplicate ID. If duplicate IDs have different semantic fields, treat that as a canonical identity collision; never merge or silently overwrite them. The validator also rejects one semantic tuple represented by different canonical references.
+Compute each ID with `node <skill-dir>/coverage-id.cjs '<canonical_refs JSON>'` rather than by hand; it uses the same encoder as the ledger validator and rejects unsafe references. Use the fixed canonical value `profile/quick/all-in-scope-subsystems` for the quick profile's coarsened subsystem dimension. Do not include wave number, agent, verdict, severity, or line number in a reference or ID. Sort units lexicographically by `coverage_id` before each assignment. Fail on every duplicate ID. If duplicate IDs have different semantic fields, treat that as a canonical identity collision; never merge or silently overwrite them. The validator also rejects one semantic tuple represented by different canonical references.
 
 Each unit records:
 
