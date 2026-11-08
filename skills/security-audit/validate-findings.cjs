@@ -2,10 +2,14 @@
 
 /**
  * Validates findings.json against report-schema.json.
- * Usage: node validate-findings.cjs <path-to-findings.json>
+ * Usage: node validate-findings.cjs <path-to-findings.json> [--target <target-dir>]
  *
  * This is a dependency-free interpreter for the JSON Schema keywords used by
  * report-schema.json, plus finding-specific checks that are clearer in code.
+ *
+ * Without --target, each trace and evidence quote is checked for shape only. With
+ * --target, each cited file is read below that directory without following symlinks,
+ * and its quote must match the file's bytes beginning on the cited line.
  */
 
 const fs = require("fs");
@@ -45,8 +49,12 @@ const LIMITS = Object.freeze({
   arrayItems: 1000,
   canonicalKeyBytes: 1024 * 1024,
   uniqueSetBytes: 5 * 1024 * 1024,
+  sourceFileBytes: 64 * 1024 * 1024,
+  quoteCheckBytes: 512 * 1024 * 1024,
   validationErrors: 100,
 });
+const LINE_FEED = 0x0a;
+const USAGE = "Usage: node validate-findings.cjs <path-to-findings.json> [--target <target-dir>]";
 const VISIBLE_CONTENT = /[^\p{White_Space}\p{Cc}\p{Cf}\p{Default_Ignorable_Code_Point}]/u;
 const PATH_FORBIDDEN_CHARACTER = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}]/u;
 const WINDOWS_RESERVED_COMPONENT = /^(?:con|prn|aux|nul|clock\$|conin\$|conout\$|com[1-9\u00b9\u00b2\u00b3]|lpt[1-9\u00b9\u00b2\u00b3])(?:\.|$)/iu;
@@ -582,7 +590,8 @@ function collectFindingSemanticErrors(findings) {
   return errors;
 }
 
-function validateDocument(findings, schema) {
+function validateDocument(findings, schema, { target } = {}) {
+  const root = target === undefined || target === null ? null : resolveTarget(target);
   const schemaErrors = collectSchemaErrors(schema);
   if (schemaErrors.length > 0) return schemaErrors;
   const limitErrors = collectDataLimitErrors(findings, "$");
@@ -590,6 +599,9 @@ function validateDocument(findings, schema) {
   const errors = collectUnchecked(findings, schema, "$");
   if (errors.length < LIMITS.validationErrors) {
     errors.push(...collectFindingSemanticErrors(findings));
+  }
+  if (root !== null && errors.length < LIMITS.validationErrors) {
+    errors.push(...collectQuoteErrors(findings, root));
   }
   return errors;
 }
@@ -601,29 +613,33 @@ function loadSchema(schemaPath) {
   return schema;
 }
 
-function readFileWithinLimit(file) {
+function hasSafeOpenFlags() {
   const noFollow = fs.constants.O_NOFOLLOW;
   const nonBlock = fs.constants.O_NONBLOCK;
-  if (!Number.isInteger(noFollow) || noFollow === 0 || !Number.isInteger(nonBlock) || nonBlock === 0) {
-    throw new SafeInputError("OS no-follow and nonblocking input protection is unavailable");
+  return Number.isInteger(noFollow) && noFollow !== 0 && Number.isInteger(nonBlock) && nonBlock !== 0;
+}
+
+function readRegularFile(file, limit, subject) {
+  if (!hasSafeOpenFlags()) {
+    throw new SafeInputError(`OS no-follow and nonblocking ${subject} protection is unavailable`);
   }
 
   let descriptor;
   try {
-    descriptor = fs.openSync(file, fs.constants.O_RDONLY | noFollow | nonBlock);
+    descriptor = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
   } catch (error) {
     if (error && (error.code === "ELOOP" || error.code === "EMLINK")) {
-      throw new SafeInputError("input must not be a symlink");
+      throw new SafeInputError(`${subject} must not be a symlink`);
     }
     throw error;
   }
   try {
     const stat = fs.fstatSync(descriptor);
     if (!stat.isFile()) {
-      throw new SafeInputError("input must be a regular file");
+      throw new SafeInputError(`${subject} must be a regular file`);
     }
-    if (stat.size > LIMITS.inputBytes) {
-      throw new SafeInputError(`input exceeds ${LIMITS.inputBytes} byte limit`);
+    if (stat.size > limit) {
+      throw new SafeInputError(`${subject} exceeds ${limit} byte limit`);
     }
 
     const chunks = [];
@@ -633,19 +649,147 @@ function readFileWithinLimit(file) {
       const count = fs.readSync(descriptor, buffer, 0, buffer.length, null);
       if (count === 0) break;
       bytesRead += count;
-      if (bytesRead > LIMITS.inputBytes) {
-        throw new SafeInputError(`input exceeds ${LIMITS.inputBytes} byte limit`);
+      if (bytesRead > limit) {
+        throw new SafeInputError(`${subject} exceeds ${limit} byte limit`);
       }
       chunks.push(Buffer.from(buffer.subarray(0, count)));
     }
-    try {
-      return UTF8_DECODER.decode(Buffer.concat(chunks, bytesRead));
-    } catch {
-      throw new SafeInputError("input is not valid UTF-8");
-    }
+    return Buffer.concat(chunks, bytesRead);
   } finally {
     fs.closeSync(descriptor);
   }
+}
+
+function readFileWithinLimit(file) {
+  const bytes = readRegularFile(file, LIMITS.inputBytes, "input");
+  try {
+    return UTF8_DECODER.decode(bytes);
+  } catch {
+    throw new SafeInputError("input is not valid UTF-8");
+  }
+}
+
+function resolveTarget(target) {
+  if (!hasSafeOpenFlags()) {
+    throw new SafeInputError("OS no-follow and nonblocking target protection is unavailable");
+  }
+  try {
+    const root = fs.realpathSync(target);
+    if (fs.statSync(root).isDirectory()) return root;
+  } catch {
+    // A missing or unreadable target is reported like a non-directory.
+  }
+  throw new SafeInputError("target must be an existing directory");
+}
+
+// The cited path already passed isSafeRelativeSourcePath, so it is lexically inside
+// root. Refusing every symlink keeps it physically inside root too.
+function readTargetFile(root, file) {
+  const filePath = path.join(root, ...file.split("/"));
+  let resolved;
+  try {
+    resolved = fs.realpathSync(filePath);
+  } catch (error) {
+    if (error && (error.code === "ENOENT" || error.code === "ENOTDIR")) {
+      throw new SafeInputError("cited file does not exist in the target");
+    }
+    throw error;
+  }
+  if (resolved !== filePath) {
+    throw new SafeInputError("cited file must not be or pass through a symlink");
+  }
+  return readRegularFile(filePath, LIMITS.sourceFileBytes, "cited file");
+}
+
+// Maps each cited 1-based line to the offset of its first byte, or -1 when the file
+// has fewer lines. A line ends with its LF; a final line without one still counts.
+function findLineStarts(bytes, lines) {
+  const starts = new Map();
+  let line = 1;
+  let offset = 0;
+  for (const wanted of [...new Set(lines)].sort((left, right) => left - right)) {
+    while (line < wanted && offset < bytes.length) {
+      const newline = bytes.indexOf(LINE_FEED, offset);
+      offset = newline === -1 ? bytes.length : newline + 1;
+      line++;
+    }
+    starts.set(wanted, line === wanted && offset < bytes.length ? offset : -1);
+  }
+  return starts;
+}
+
+// The bytes that can hold a quote whose first byte is on the line beginning at start,
+// counting that line's LF: the line itself plus the quote's length.
+function quoteRegion(bytes, start, quoteLength) {
+  const newline = bytes.indexOf(LINE_FEED, start);
+  const lastStart = newline === -1 ? bytes.length - 1 : newline;
+  return bytes.subarray(start, Math.min(bytes.length, lastStart + quoteLength));
+}
+
+function collectQuoteErrors(findings, root) {
+  const errors = createErrorList();
+  if (!Array.isArray(findings)) return errors;
+
+  // Group citations by file so each file is read once and only one is held at a time.
+  const checks = [];
+  const checksByFile = new Map();
+  findings.forEach((finding, index) => {
+    if (!finding || typeof finding !== "object" || Array.isArray(finding)) return;
+    for (const field of ["trace", "evidence"]) {
+      if (!hasOwn(finding, field) || !Array.isArray(finding[field])) continue;
+      finding[field].forEach((entry, entryIndex) => {
+        if (!entry || typeof entry !== "object" || Array.isArray(entry)) return;
+        // Schema and semantic checks already report a malformed file, line, or quote.
+        if (!hasOwn(entry, "file") || !isSafeRelativeSourcePath(entry.file)) return;
+        if (!hasOwn(entry, "line") || !Number.isInteger(entry.line) || entry.line < 1) return;
+        if (!hasOwn(entry, "quote") || typeof entry.quote !== "string" || !hasVisibleProse(entry.quote)) return;
+        const check = { location: `$[${index}].${field}[${entryIndex}]`, line: entry.line, quote: entry.quote, error: null };
+        checks.push(check);
+        if (!checksByFile.has(entry.file)) checksByFile.set(entry.file, []);
+        checksByFile.get(entry.file).push(check);
+      });
+    }
+  });
+
+  // Many citations of one long line, or of many links to one large file, would repeat
+  // the same work, so bound the total bytes read and searched.
+  let checkedBytes = 0;
+  for (const [file, fileChecks] of checksByFile) {
+    if (checkedBytes > LIMITS.quoteCheckBytes) break;
+    let bytes;
+    try {
+      bytes = readTargetFile(root, file);
+    } catch (error) {
+      const reason = error instanceof SafeInputError ? error.message : "cited file could not be opened or read safely";
+      for (const check of fileChecks) check.error = `${check.location}.file: ${reason}`;
+      continue;
+    }
+    checkedBytes += bytes.length;
+    if (checkedBytes > LIMITS.quoteCheckBytes) break;
+    const starts = findLineStarts(bytes, fileChecks.map((check) => check.line));
+    for (const check of fileChecks) {
+      const start = starts.get(check.line);
+      if (start === -1) {
+        check.error = `${check.location}.line: exceeds the last line of ${safeQuote(file)}`;
+        continue;
+      }
+      const quote = Buffer.from(check.quote, "utf8");
+      const region = quoteRegion(bytes, start, quote.length);
+      checkedBytes += region.length;
+      if (checkedBytes > LIMITS.quoteCheckBytes) break;
+      if (region.indexOf(quote) === -1) {
+        check.error = `${check.location}.quote: must match the bytes of ${safeQuote(file)} starting on line ${check.line}`;
+      }
+    }
+  }
+
+  if (checkedBytes > LIMITS.quoteCheckBytes) {
+    errors.push(`$: quote checks exceed ${LIMITS.quoteCheckBytes} byte limit`);
+  }
+  for (const check of checks) {
+    if (check.error !== null) errors.push(check.error);
+  }
+  return errors;
 }
 
 function enforceJsonTextLimits(contents) {
@@ -700,10 +844,40 @@ function enforceJsonTextLimits(contents) {
   }
 }
 
-function run(file) {
-  if (!file) {
-    console.error("Usage: node validate-findings.cjs <path-to-findings.json>");
+// Anything other than one findings path and at most one `--target <dir>` is a usage
+// error, so a mistyped option cannot silently skip the quote check.
+function parseArguments(args) {
+  let file;
+  let target;
+  for (let index = 0; index < args.length; index++) {
+    if (args[index] === "--target" && target === undefined && index + 1 < args.length) {
+      target = args[++index];
+    } else if (file === undefined && !args[index].startsWith("-")) {
+      file = args[index];
+    } else {
+      return null;
+    }
+  }
+  return file === undefined ? null : { file, target };
+}
+
+function run(args) {
+  const options = parseArguments(args);
+  if (options === null) {
+    console.error(USAGE);
     return 1;
+  }
+
+  const file = options.file;
+  let target;
+  if (options.target !== undefined) {
+    try {
+      target = resolveTarget(options.target);
+    } catch (error) {
+      const reason = error instanceof SafeInputError ? error.message : "target must be an existing directory";
+      console.error(`Failed to read target: ${reason}`);
+      return 1;
+    }
   }
 
   let schema;
@@ -741,7 +915,7 @@ function run(file) {
 
   let errors;
   try {
-    errors = validateDocument(findings, schema);
+    errors = validateDocument(findings, schema, { target });
   } catch {
     console.error("Failed to validate findings JSON: unexpected validation error");
     return 1;
@@ -770,4 +944,4 @@ module.exports = {
   validateDocument,
 };
 
-if (require.main === module) process.exit(run(process.argv[2]));
+if (require.main === module) process.exit(run(process.argv.slice(2)));

@@ -29,12 +29,14 @@ const TERMINAL_CONTROL_BYTES = [
   Buffer.from("\ufe0f"),
 ];
 
-function source(kind = "entrypoint", file = "src/handler.c", line = 10) {
-  return { kind, file, line, scope: "handle", description: "Attacker data reaches the operation." };
+const DEFAULT_QUOTE = "apply_change(object, request->changes);";
+
+function source(kind = "entrypoint", file = "src/handler.c", line = 10, quote = DEFAULT_QUOTE) {
+  return { kind, file, line, quote, scope: "handle", description: "Attacker data reaches the operation." };
 }
 
-function evidence(file = "src/handler.c", line = 10) {
-  return { file, line, description: "The source performs the operation without the required check." };
+function evidence(file = "src/handler.c", line = 10, quote = DEFAULT_QUOTE) {
+  return { file, line, quote, description: "The source performs the operation without the required check." };
 }
 
 function confirmed() {
@@ -99,12 +101,12 @@ function errorsFor(value) {
 }
 
 function runCli(contents, options = {}) {
-  const { nodeArgs = [], timeout = CLI_TIMEOUT_MS } = options;
+  const { nodeArgs = [], args = (findingsPath) => [findingsPath], timeout = CLI_TIMEOUT_MS } = options;
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "validate-findings-"));
   const findingsPath = path.join(directory, "findings.json");
   try {
     fs.writeFileSync(findingsPath, contents);
-    return spawnSync(process.execPath, [...nodeArgs, validatorPath, findingsPath], {
+    return spawnSync(process.execPath, [...nodeArgs, validatorPath, ...args(findingsPath)], {
       encoding: "utf8",
       timeout,
     });
@@ -146,6 +148,56 @@ function rejectMutation(factory, mutate) {
   const value = factory();
   mutate(value);
   assert.notEqual(errorsFor([value]).length, 0);
+}
+
+// A small target tree for --target quote checks. Every line ends with LF except in crlf.c.
+const TARGET_FILES = {
+  "LICENSE": "MIT License\n",
+  "skills/security-audit/report-schema.json": [
+    "{",
+    "  \"$comment\": \"Top-level contract for findings.json.\",",
+    "  \"type\": \"array\",",
+    "",
+  ].join("\n"),
+  "src/crlf.c": "int main(void) {\r\n  return run();\r\n}\r\n",
+  "src/db.js": [
+    "const db = require(\"./pool\");",
+    "",
+    "function getUser(req, res) {",
+    "  const sql = \"SELECT * FROM users WHERE id = \" + req.query.id;",
+    "  return db.query(sql);",
+    "}",
+    "",
+  ].join("\n"),
+  "src/menu.txt": "caf\u00e9 au lait\n",
+};
+
+function withTarget(callback) {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "validate-findings-target-"));
+  const root = path.join(directory, "target");
+  try {
+    for (const [name, contents] of Object.entries(TARGET_FILES)) {
+      const filePath = path.join(root, ...name.split("/"));
+      fs.mkdirSync(path.dirname(filePath), { recursive: true });
+      fs.writeFileSync(filePath, contents);
+    }
+    return callback(root, directory);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+}
+
+// One finding whose trace[0] is the citation under test. Its evidence cites a real
+// target line, so every reported error belongs to trace[0].
+function citing(file, line, quote) {
+  const finding = rejected();
+  finding.trace = [source("sink", file, line, quote)];
+  finding.evidence = [evidence("src/db.js", 5, "return db.query(sql);")];
+  return [finding];
+}
+
+function targetErrorsFor(root, file, line, quote) {
+  return validateDocument(citing(file, line, quote), schema, { target: root });
 }
 
 test("schema is an actual top-level array with exactly three branches", () => {
@@ -372,6 +424,197 @@ test("accepts legitimate Unicode source paths and prose", () => {
   assert.deepEqual(errorsFor([finding]), []);
 });
 
+test("rejects a cited location without a quote in every verdict branch", () => {
+  // Issue #134: this fabricated record cites real files and lines but no source bytes.
+  const fabricated = confirmed();
+  fabricated.trace = [
+    source("entrypoint", "skills/security-audit/report-schema.json", 1),
+    source("propagation", "skills/security-audit/report-schema.json", 2),
+    source("sink", "skills/security-audit/report-schema.json", 3),
+  ];
+  fabricated.evidence = [evidence("LICENSE", 1)];
+  for (const entry of [...fabricated.trace, ...fabricated.evidence]) delete entry.quote;
+  const errors = errorsFor([fabricated]);
+  for (const location of ["trace[0]", "trace[1]", "trace[2]", "evidence[0]"]) {
+    assert(errors.includes(`$[0].${location}: missing required field "quote"`), errors.join("\n"));
+  }
+
+  for (const factory of [confirmed, needsValidation, rejected]) {
+    for (const field of ["trace", "evidence"]) {
+      const finding = factory();
+      delete finding[field][0].quote;
+      assert(errorsFor([finding]).includes(`$[0].${field}[0]: missing required field "quote"`), `${finding.verdict} ${field}`);
+    }
+  }
+});
+
+test("requires a visible quote and preserves its exact bytes", () => {
+  for (const invalid of ["", " \t\r\n", "\u200b", "\ufe0f", "visible\ud800", 42, null]) {
+    for (const factory of [confirmed, needsValidation, rejected]) {
+      const finding = factory();
+      finding.evidence[0].quote = invalid;
+      assert(errorsFor([finding]).some((error) => error.startsWith("$[0].evidence[0].quote: ")),
+        `${finding.verdict} ${JSON.stringify(invalid)}`);
+    }
+  }
+
+  const finding = confirmed();
+  const exact = "\tif (!is_owner(user, object))  \r\n\t\treturn apply(object);\u0000";
+  finding.trace[0].quote = exact;
+  assert.deepEqual(errorsFor([finding]), []);
+  assert.equal(finding.trace[0].quote, exact);
+});
+
+test("checks only quote shape and reads no file without a target", () => {
+  const finding = rejected();
+  finding.trace = [source("sink", "src/not-in-any-checkout.c", 99999, "forged_call(user_input);")];
+  assert.deepEqual(errorsFor([finding]), []);
+});
+
+test("accepts a quote that begins on the cited line of the target file", { skip: !HAS_SAFE_INPUT_OPEN }, () => {
+  withTarget((root) => {
+    const cases = [
+      ["src/db.js", 3, "function getUser(req, res) {"],
+      ["src/db.js", 4, "req.query.id"],
+      ["src/db.js", 4, "  const sql = \"SELECT * FROM users WHERE id = \" + req.query.id;\n  return db.query(sql);\n}"],
+      ["src/db.js", 4, "req.query.id;\n  return db.query(sql);"],
+      ["src/db.js", 2, "\nfunction getUser(req, res) {"],
+      ["src/db.js", 6, "}\n"],
+      ["src/crlf.c", 1, "int main(void) {\r\n  return run();"],
+      ["src/menu.txt", 1, "caf\u00e9"],
+    ];
+    for (const [file, line, quote] of cases) {
+      assert.deepEqual(targetErrorsFor(root, file, line, quote), [], `${file}:${line} ${JSON.stringify(quote)}`);
+    }
+  });
+});
+
+test("rejects a forged quote or one that does not begin on the cited line", { skip: !HAS_SAFE_INPUT_OPEN }, () => {
+  withTarget((root) => {
+    const cases = [
+      // Absent from the file.
+      ["src/db.js", 5, "return db.query(\"SELECT * FROM users WHERE id = ?\", [req.query.id]);"],
+      // Present, but on line 5 rather than the cited line 4.
+      ["src/db.js", 4, "return db.query(sql);"],
+      // Begins on line 4, before the cited line 5.
+      ["src/db.js", 5, "req.query.id;\n  return db.query(sql);"],
+      // Begins on line 3, after the empty cited line 2.
+      ["src/db.js", 2, "function getUser(req, res) {"],
+      // Runs past the bytes of the cited line.
+      ["src/db.js", 5, "return db.query(sql); // parameterized"],
+      // Reindents a continuation line.
+      ["src/db.js", 4, "const sql = \"SELECT * FROM users WHERE id = \" + req.query.id;\nreturn db.query(sql);"],
+      // Uses LF where the file has CRLF.
+      ["src/crlf.c", 1, "int main(void) {\n  return run();"],
+      // Canonically equivalent text with different bytes.
+      ["src/menu.txt", 1, "cafe\u0301"],
+    ];
+    for (const [file, line, quote] of cases) {
+      assert.deepEqual(targetErrorsFor(root, file, line, quote), [
+        `$[0].trace[0].quote: must match the bytes of ${JSON.stringify(file)} starting on line ${line}`,
+      ], `${file}:${line} ${JSON.stringify(quote)}`);
+    }
+    for (const line of [7, Number.MAX_SAFE_INTEGER]) {
+      assert.deepEqual(targetErrorsFor(root, "src/db.js", line, "}"), [
+        "$[0].trace[0].line: exceeds the last line of \"src/db.js\"",
+      ], `line ${line}`);
+    }
+  });
+});
+
+test("rejects the issue 134 fabricated finding when its quotes are forged", { skip: !HAS_SAFE_INPUT_OPEN }, () => {
+  withTarget((root) => {
+    const schemaPath = "skills/security-audit/report-schema.json";
+    const fabricated = confirmed();
+    fabricated.trace = [
+      source("entrypoint", schemaPath, 1, "app.get(\"/users\", getUser);"),
+      source("propagation", schemaPath, 2, "const sql = \"SELECT * FROM users WHERE id = \" + req.query.id;"),
+      source("sink", schemaPath, 3, "return db.query(sql);"),
+    ];
+    fabricated.evidence = [evidence("LICENSE", 1, "db.query(sql)")];
+    assert.deepEqual(validateDocument([fabricated], schema, { target: root }), [
+      `$[0].trace[0].quote: must match the bytes of "${schemaPath}" starting on line 1`,
+      `$[0].trace[1].quote: must match the bytes of "${schemaPath}" starting on line 2`,
+      `$[0].trace[2].quote: must match the bytes of "${schemaPath}" starting on line 3`,
+      "$[0].evidence[0].quote: must match the bytes of \"LICENSE\" starting on line 1",
+    ]);
+  });
+});
+
+test("reads no cited file outside the target", { skip: !HAS_SAFE_INPUT_OPEN }, () => {
+  withTarget((root, directory) => {
+    const outsideFile = path.join(directory, "outside.js");
+    fs.writeFileSync(outsideFile, "return db.query(sql);\n");
+    for (const file of ["../outside.js", "src/../../outside.js", outsideFile]) {
+      assert.deepEqual(targetErrorsFor(root, file, 1, "return db.query(sql);"), [
+        "$[0].trace[0].file: must be a safe repository-relative source path",
+      ], file);
+    }
+  });
+});
+
+test("refuses a cited file that is or passes through a symlink", { skip: process.platform === "win32" || !HAS_SAFE_INPUT_OPEN }, () => {
+  withTarget((root, directory) => {
+    const outside = path.join(directory, "outside");
+    fs.mkdirSync(outside);
+    fs.writeFileSync(path.join(outside, "secret.js"), "return db.query(sql);\n");
+    fs.symlinkSync(path.join(outside, "secret.js"), path.join(root, "src", "escape.js"));
+    fs.symlinkSync(outside, path.join(root, "vendor"));
+    fs.symlinkSync("db.js", path.join(root, "src", "alias.js"));
+    for (const [file, line] of [["src/escape.js", 1], ["vendor/secret.js", 1], ["src/alias.js", 5]]) {
+      assert.deepEqual(targetErrorsFor(root, file, line, "return db.query(sql);"), [
+        "$[0].trace[0].file: cited file must not be or pass through a symlink",
+      ], file);
+    }
+  });
+});
+
+test("bounds the total bytes read and searched for quotes", { skip: process.platform === "win32" || !HAS_SAFE_INPUT_OPEN }, () => {
+  withTarget((root) => {
+    const limitError = `$: quote checks exceed ${LIMITS.quoteCheckBytes} byte limit`;
+    const findingsFor = (citations) => citations.map(([file, quote], index) => {
+      const [finding] = citing(file, 1, quote);
+      finding.fingerprint = `bounded-${String(index).padStart(4, "0")}`;
+      return finding;
+    });
+
+    // Repeated searches of one long line: each quote matches only at the line's end.
+    const lineBytes = 16 * 1024 * 1024;
+    fs.writeFileSync(path.join(root, "src", "bundle.min.js"), `${"x".repeat(lineBytes - 3)}END`);
+    const searches = Array.from({ length: LIMITS.quoteCheckBytes / lineBytes }, (_, index) =>
+      ["src/bundle.min.js", `${"x".repeat(index + 1)}END`]);
+    assert.deepEqual(validateDocument(findingsFor(searches), schema, { target: root }), [limitError]);
+
+    // Repeated reads of one large sparse file through hard links, each citing a short line.
+    const large = path.join(root, "src", "large.bin");
+    fs.writeFileSync(large, "x\n");
+    fs.truncateSync(large, LIMITS.sourceFileBytes);
+    const reads = Array.from({ length: LIMITS.quoteCheckBytes / LIMITS.sourceFileBytes + 1 }, (_, index) => {
+      const link = `src/link-${index}.bin`;
+      fs.linkSync(large, path.join(root, ...link.split("/")));
+      return [link, "x"];
+    });
+    assert.deepEqual(validateDocument(findingsFor(reads), schema, { target: root }), [limitError]);
+  });
+});
+
+test("reports a missing, non-regular, or oversized cited file", { skip: !HAS_SAFE_INPUT_OPEN }, () => {
+  withTarget((root) => {
+    const oversized = path.join(root, "src", "oversized.js");
+    fs.writeFileSync(oversized, "");
+    fs.truncateSync(oversized, LIMITS.sourceFileBytes + 1);
+    const cases = [
+      ["src/missing.js", "cited file does not exist in the target"],
+      ["src/db.js/child.js", "cited file does not exist in the target"],
+      ["src", "cited file must be a regular file"],
+      ["src/oversized.js", `cited file exceeds ${LIMITS.sourceFileBytes} byte limit`],
+    ];
+    for (const [file, message] of cases) {
+      assert.deepEqual(targetErrorsFor(root, file, 1, "return db.query(sql);"), [`$[0].trace[0].file: ${message}`], file);
+    }
+  });
+});
+
 test("CLI rejects input above the byte limit without an exception trace", () => {
   const result = runCli(Buffer.alloc(LIMITS.inputBytes + 1, 0x20));
   const output = cliOutput(result);
@@ -502,6 +745,118 @@ test("CLI rejects a symlink without following it", { skip: process.platform === 
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }
+});
+
+test("CLI checks quotes against the --target source", { skip: !HAS_SAFE_INPUT_OPEN }, () => {
+  withTarget((root) => {
+    const targetArgs = { args: (findingsPath) => [findingsPath, "--target", root] };
+    const exact = JSON.stringify(citing("src/db.js", 5, "return db.query(sql);"));
+    const forged = JSON.stringify(citing("src/db.js", 5, "return db.query(\"SELECT * FROM users WHERE id = ?\", [id]);"));
+
+    const passed = runCli(exact, targetArgs);
+    assert.equal(passed.status, 0, cliOutput(passed));
+    assert.match(passed.stdout, /PASS: 1 findings valid/);
+
+    const failed = runCli(forged, targetArgs);
+    assert.equal(failed.status, 1, cliOutput(failed));
+    assert.match(failed.stderr, /ERROR: \$\[0\]\.trace\[0\]\.quote: must match the bytes of "src\/db\.js" starting on line 5/);
+    assert.match(failed.stderr, /FAIL: 1 validation error\(s\)/);
+
+    // Without --target the validator checks only that each quote is present and visible.
+    const shapeOnly = runCli(forged);
+    assert.equal(shapeOnly.status, 0, cliOutput(shapeOnly));
+  });
+});
+
+test("CLI also accepts --target before the findings path", { skip: !HAS_SAFE_INPUT_OPEN }, () => {
+  withTarget((root) => {
+    const targetFirst = { args: (findingsPath) => ["--target", root, findingsPath] };
+    const exact = JSON.stringify(citing("src/db.js", 5, "return db.query(sql);"));
+    const forged = JSON.stringify(citing("src/db.js", 5, "return db.query(\"SELECT * FROM users WHERE id = ?\", [id]);"));
+
+    const passed = runCli(exact, targetFirst);
+    assert.equal(passed.status, 0, cliOutput(passed));
+    assert.match(passed.stdout, /PASS: 1 findings valid/);
+
+    const failed = runCli(forged, targetFirst);
+    assert.equal(failed.status, 1, cliOutput(failed));
+    assert.match(failed.stderr, /ERROR: \$\[0\]\.trace\[0\]\.quote: must match the bytes of "src\/db\.js" starting on line 5/);
+  });
+});
+
+test("CLI refuses malformed --target arguments instead of skipping quote checks", { skip: !HAS_SAFE_INPUT_OPEN }, () => {
+  withTarget((root) => {
+    const forged = JSON.stringify(citing("src/db.js", 5, "return db.query(\"SELECT * FROM users WHERE id = ?\", [id]);"));
+    const usage = /^Usage: node validate-findings\.cjs <path-to-findings\.json> \[--target <target-dir>\]$/m;
+    for (const args of [
+      (findingsPath) => [findingsPath, "--target"],
+      (findingsPath) => [findingsPath, "--target", root, "--target", root],
+      (findingsPath) => [findingsPath, "--taget", root],
+      (findingsPath) => [findingsPath, "--target", root, findingsPath],
+      () => ["--target", root],
+    ]) {
+      const result = runCli(forged, { args });
+      assert.equal(result.status, 1, cliOutput(result));
+      assert.match(result.stderr, usage);
+      assert.equal(result.stdout, "");
+    }
+    for (const target of [path.join(root, "missing"), path.join(root, "src", "db.js")]) {
+      const result = runCli(forged, { args: (findingsPath) => [findingsPath, "--target", target] });
+      assert.equal(result.status, 1, cliOutput(result));
+      assert.equal(result.stderr, "Failed to read target: target must be an existing directory\n");
+    }
+  });
+});
+
+test("CLI rejects a cited FIFO without blocking", { skip: process.platform === "win32" || !HAS_SAFE_INPUT_OPEN }, () => {
+  withTarget((root) => {
+    const created = spawnSync("mkfifo", [path.join(root, "src", "pipe")], { encoding: "utf8", timeout: CLI_TIMEOUT_MS });
+    assert.equal(created.status, 0, cliOutput(created));
+    const result = runCli(JSON.stringify(citing("src/pipe", 1, "return db.query(sql);")), {
+      args: (findingsPath) => [findingsPath, "--target", root],
+    });
+    const output = cliOutput(result);
+    assert.notEqual(result.error && result.error.code, "ETIMEDOUT", output);
+    assert.equal(result.status, 1, output);
+    assert.match(output, /\$\[0\]\.trace\[0\]\.file: cited file must be a regular file/);
+    assert.doesNotMatch(output, /stack|at validate-findings/i);
+  });
+});
+
+// Every verdict is checked, not only confirmed: a forged needs_validation record wastes
+// owner time, and a forged rejected record can suppress a real claim in later runs.
+function assertTargetChecksQuotes(finding) {
+  withTarget((root) => {
+    const targetArgs = { args: (findingsPath) => [findingsPath, "--target", root] };
+    finding.trace = [source("sink", "src/db.js", 5, "return db.query(sql);")];
+    finding.evidence = [evidence("src/db.js", 4, "req.query.id")];
+    const passed = runCli(JSON.stringify([finding]), targetArgs);
+    assert.equal(passed.status, 0, cliOutput(passed));
+    assert.match(passed.stdout, /PASS: 1 findings valid/);
+
+    finding.trace[0].quote = "return db.query(\"SELECT * FROM users WHERE id = ?\", [id]);";
+    finding.evidence[0].file = "src/never-existed.c";
+    const failed = runCli(JSON.stringify([finding]), targetArgs);
+    assert.equal(failed.status, 1, cliOutput(failed));
+    assert.equal(failed.stderr, [
+      "ERROR: $[0].trace[0].quote: must match the bytes of \"src/db.js\" starting on line 5",
+      "ERROR: $[0].evidence[0].file: cited file does not exist in the target",
+      "FAIL: 2 validation error(s)",
+      "",
+    ].join("\n"));
+  });
+}
+
+test("--target checks quotes in rejected records too", { skip: !HAS_SAFE_INPUT_OPEN }, () => {
+  const finding = rejected();
+  assert.equal(finding.verdict, "rejected");
+  assertTargetChecksQuotes(finding);
+});
+
+test("--target checks quotes in needs_validation records too", { skip: !HAS_SAFE_INPUT_OPEN }, () => {
+  const finding = needsValidation();
+  assert.equal(finding.verdict, "needs_validation");
+  assertTargetChecksQuotes(finding);
 });
 
 test("CLI rejects input above the nesting-depth limit without an exception trace", () => {
