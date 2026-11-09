@@ -490,6 +490,26 @@ test("rejects reassignment owner reuse and evidence mixing", () => {
   assert(errorsFor([unordered]).some((error) => error.includes("strictly increasing")));
 });
 
+test("rejects reuse of verifier owners from archived checks", () => {
+  const reusedVerifier = unit({
+    attempts: [archivedAttempt({ local_checks: [localCheck("verifier-1")] })],
+    wave: 2,
+    status: "covered",
+    agent_id: "hunter-2",
+    reviewed_paths: ["src/router.ts"],
+    local_checks: [localCheck("verifier-1")],
+  });
+  assert(errorsFor([reusedVerifier]).some((error) => error.includes("prior verifier owner evidence must remain in its archived attempt")));
+
+  const reusedAsHunter = unit({
+    attempts: [archivedAttempt({ local_checks: [localCheck("verifier-1")] })],
+    wave: 2,
+    status: "in_progress",
+    agent_id: "verifier-1",
+  });
+  assert(errorsFor([reusedAsHunter]).some((error) => error.includes("current assignment owner must be fresh after reassignment")));
+});
+
 test("rejects unsafe paths and malformed fingerprints", () => {
   for (const value of [
     "/etc/passwd",
