@@ -10,17 +10,20 @@ const {
   encodeCanonicalRef,
   isSafeAgentId,
   isSafeRelativePath,
+  openWindowsInputDescriptor,
   preflightJsonText,
+  sameFileIdentity,
   validateDocument,
 } = require("./validate-coverage-ledger.cjs");
 
 const validatorPath = path.join(__dirname, "validate-coverage-ledger.cjs");
 const CLI_TIMEOUT_MS = 5000;
 const HOSTILE_CLI_TIMEOUT_MS = 15000;
-const HAS_SAFE_INPUT_OPEN = Number.isInteger(fs.constants.O_NOFOLLOW) &&
+// Windows has no O_NOFOLLOW or O_NONBLOCK; the validators use an identity-checked open there.
+const HAS_SAFE_INPUT_OPEN = process.platform === "win32" || (Number.isInteger(fs.constants.O_NOFOLLOW) &&
   fs.constants.O_NOFOLLOW !== 0 &&
   Number.isInteger(fs.constants.O_NONBLOCK) &&
-  fs.constants.O_NONBLOCK !== 0;
+  fs.constants.O_NONBLOCK !== 0);
 
 function unit(overrides = {}) {
   const canonicalRefs = overrides.canonical_refs || {
@@ -737,4 +740,146 @@ test("accepts a canonical ID derived from near-maximum multibyte references", ()
     const result = runCli(JSON.stringify([value]));
     assert.equal(result.status, 0, cliOutput(result));
   }
+});
+
+test("sameFileIdentity matches only an equal, reported volume and file index", () => {
+  const base = { dev: 7n, ino: 42n };
+  assert.equal(sameFileIdentity(base, { dev: 7n, ino: 42n }), true);
+  assert.equal(sameFileIdentity(base, { dev: 8n, ino: 42n }), false);
+  assert.equal(sameFileIdentity(base, { dev: 7n, ino: 43n }), false);
+  assert.equal(sameFileIdentity({ dev: 7n, ino: 0n }, { dev: 7n, ino: 0n }), false);
+});
+
+function windowsCliRun(inputPath) {
+  const result = spawnSync(process.execPath, [validatorPath, inputPath], {
+    encoding: "utf8",
+    timeout: CLI_TIMEOUT_MS,
+  });
+  const output = cliOutput(result);
+  assert.notEqual(result.error && result.error.code, "ETIMEDOUT", output);
+  assert.equal(result.status, 1, output);
+  assert.doesNotMatch(output, /stack|at validate-coverage-ledger/i);
+  return output;
+}
+
+test("Windows: accepts a regular file through the identity-checked open", { skip: process.platform !== "win32" }, () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "validate-coverage-ledger-win-regular-"));
+  const inputPath = path.join(directory, "input.json");
+  try {
+    fs.writeFileSync(inputPath, JSON.stringify([unit()]));
+    const result = spawnSync(process.execPath, [validatorPath, inputPath], {
+      encoding: "utf8",
+      timeout: CLI_TIMEOUT_MS,
+    });
+    const output = cliOutput(result);
+    assert.equal(result.status, 0, output);
+    assert.doesNotMatch(output, /no-follow and nonblocking input protection is unavailable/);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("Windows: rejects a directory junction without following it", { skip: process.platform !== "win32" }, () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "validate-coverage-ledger-win-junction-"));
+  const junctionPath = path.join(directory, "input.json");
+  try {
+    fs.symlinkSync(directory, junctionPath, "junction");
+    assert.match(windowsCliRun(junctionPath), /input must not be a symlink/);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("Windows: rejects a file symlink without following it", { skip: process.platform !== "win32" }, (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "validate-coverage-ledger-win-symlink-"));
+  const targetPath = path.join(directory, "target.json");
+  const symlinkPath = path.join(directory, "input.json");
+  try {
+    fs.writeFileSync(targetPath, JSON.stringify([unit()]));
+    try {
+      fs.symlinkSync(targetPath, symlinkPath, "file");
+    } catch (error) {
+      if (error && error.code === "EPERM") {
+        t.skip("creating a file symlink needs Developer Mode or administrator rights");
+        return;
+      }
+      throw error;
+    }
+    assert.match(windowsCliRun(symlinkPath), /input must not be a symlink/);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("Windows: rejects a device name without opening or blocking", { skip: process.platform !== "win32" }, () => {
+  const separator = String.fromCharCode(92);
+  const pipePath = ["", "", ".", "pipe", "validate-coverage-ledger-absent"].join(separator);
+  for (const device of ["CON", "NUL", pipePath]) {
+    windowsCliRun(device);
+  }
+});
+
+// Deterministic race coverage: a scripted fs returns chosen stat results for the first
+// lstat, the fstat of the opened descriptor, and the second lstat, so each swap lands
+// at an exact step. Runs on every platform.
+function fakeStat({ dev = 7n, ino = 42n, link = false, file = true } = {}) {
+  return { dev, ino, isSymbolicLink: () => link, isFile: () => file };
+}
+
+function scriptedFs({ before, opened, after }) {
+  const calls = [];
+  let lstats = 0;
+  return {
+    calls,
+    lstatSync(file, options) {
+      calls.push("lstat");
+      assert.deepEqual(options, { bigint: true });
+      lstats += 1;
+      return lstats === 1 ? before : after;
+    },
+    openSync() {
+      calls.push("open");
+      return 99;
+    },
+    fstatSync(descriptor, options) {
+      calls.push("fstat");
+      assert.equal(descriptor, 99);
+      assert.deepEqual(options, { bigint: true });
+      return opened;
+    },
+    closeSync(descriptor) {
+      calls.push("close");
+      assert.equal(descriptor, 99);
+    },
+  };
+}
+
+test("Windows open returns the descriptor when every identity matches", () => {
+  const api = scriptedFs({ before: fakeStat(), opened: fakeStat(), after: fakeStat() });
+  assert.equal(openWindowsInputDescriptor("input.json", api), 99);
+  assert.deepEqual(api.calls, ["lstat", "open", "fstat", "lstat"]);
+});
+
+for (const [name, script] of [
+  ["a swap between the lstat and the open", { before: fakeStat(), opened: fakeStat({ ino: 43n }), after: fakeStat({ ino: 43n }) }],
+  ["a swap and restore around the open", { before: fakeStat(), opened: fakeStat({ ino: 43n }), after: fakeStat() }],
+  ["a swap right after the open", { before: fakeStat(), opened: fakeStat(), after: fakeStat({ ino: 43n }) }],
+  ["a swap to another volume", { before: fakeStat(), opened: fakeStat({ dev: 8n }), after: fakeStat({ dev: 8n }) }],
+  ["a link that appears after the open", { before: fakeStat(), opened: fakeStat(), after: fakeStat({ link: true }) }],
+  ["a filesystem that reports no file index", { before: fakeStat({ ino: 0n }), opened: fakeStat({ ino: 0n }), after: fakeStat({ ino: 0n }) }],
+]) {
+  test(`Windows open rejects ${name} and closes the descriptor`, () => {
+    const api = scriptedFs(script);
+    assert.throws(() => openWindowsInputDescriptor("input.json", api), /input changed while it was opened/);
+    assert.deepEqual(api.calls, ["lstat", "open", "fstat", "lstat", "close"]);
+  });
+}
+
+test("Windows open rejects a link or non-regular path before opening it", () => {
+  const link = scriptedFs({ before: fakeStat({ link: true }) });
+  assert.throws(() => openWindowsInputDescriptor("input.json", link), /input must not be a symlink/);
+  assert.deepEqual(link.calls, ["lstat"]);
+  const device = scriptedFs({ before: fakeStat({ file: false }) });
+  assert.throws(() => openWindowsInputDescriptor("input.json", device), /input must be a regular file/);
+  assert.deepEqual(device.calls, ["lstat"]);
 });
