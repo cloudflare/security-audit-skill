@@ -718,21 +718,53 @@ function collectUnitErrors(unit, index) {
   return errors;
 }
 
-function readFileWithinLimit(file) {
-  const noFollow = fs.constants.O_NOFOLLOW;
-  const nonBlock = fs.constants.O_NONBLOCK;
-  if (!Number.isInteger(noFollow) || noFollow === 0 || !Number.isInteger(nonBlock) || nonBlock === 0) {
-    // Node exposes no race-safe fallback on these platforms, so reject all inputs.
-    throw new SafeInputError("OS no-follow and nonblocking input protection is unavailable");
-  }
+// Two stat results name the same file when the volume and file index match.
+// A zero index means the filesystem did not report an identity, so nothing can be compared.
+function sameFileIdentity(left, right) {
+  return left.ino !== 0n && left.dev === right.dev && left.ino === right.ino;
+}
 
-  let descriptor;
+// Windows exposes neither O_NOFOLLOW nor O_NONBLOCK. Reject a link or non-regular path
+// before opening, then require the opened descriptor and a second lstat to name the same
+// file as the first lstat. A swap before or after the open changes the identity and is
+// rejected. A non-regular path such as CON or a named pipe is never opened, so the open
+// cannot block, and Windows filesystems have no FIFOs.
+// fsApi is injectable so tests can script a swap between the lstat, open and fstat calls.
+function openWindowsInputDescriptor(file, fsApi = fs) {
+  const before = fsApi.lstatSync(file, { bigint: true });
+  if (before.isSymbolicLink()) throw new SafeInputError("input must not be a symlink");
+  if (!before.isFile()) throw new SafeInputError("input must be a regular file");
+  const descriptor = fsApi.openSync(file, fs.constants.O_RDONLY);
   try {
-    descriptor = fs.openSync(file, fs.constants.O_RDONLY | noFollow | nonBlock);
+    const opened = fsApi.fstatSync(descriptor, { bigint: true });
+    const after = fsApi.lstatSync(file, { bigint: true });
+    if (after.isSymbolicLink() || !sameFileIdentity(before, opened) || !sameFileIdentity(opened, after)) {
+      throw new SafeInputError("input changed while it was opened");
+    }
+    return descriptor;
   } catch (error) {
-    if (error && (error.code === "ELOOP" || error.code === "EMLINK")) throw new SafeInputError("input must not be a symlink");
+    fsApi.closeSync(descriptor);
     throw error;
   }
+}
+
+function openInputDescriptor(file) {
+  const noFollow = fs.constants.O_NOFOLLOW;
+  const nonBlock = fs.constants.O_NONBLOCK;
+  if (Number.isInteger(noFollow) && noFollow !== 0 && Number.isInteger(nonBlock) && nonBlock !== 0) {
+    try {
+      return fs.openSync(file, fs.constants.O_RDONLY | noFollow | nonBlock);
+    } catch (error) {
+      if (error && (error.code === "ELOOP" || error.code === "EMLINK")) throw new SafeInputError("input must not be a symlink");
+      throw error;
+    }
+  }
+  if (process.platform === "win32") return openWindowsInputDescriptor(file);
+  throw new SafeInputError("OS no-follow and nonblocking input protection is unavailable");
+}
+
+function readFileWithinLimit(file) {
+  const descriptor = openInputDescriptor(file);
   try {
     const stat = fs.fstatSync(descriptor);
     if (!stat.isFile()) throw new SafeInputError("input must be a regular file");
@@ -863,6 +895,8 @@ module.exports = {
   hasVisibleProse,
   isSafeAgentId,
   isSafeRelativePath,
+  openWindowsInputDescriptor,
+  sameFileIdentity,
   preflightJsonText,
   readFileWithinLimit,
   safeQuote,
