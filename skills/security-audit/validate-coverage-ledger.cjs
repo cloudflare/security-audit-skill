@@ -573,7 +573,18 @@ function validateAttempts(value, unit, base, errors) {
   if (value.length > MAX_LIST_ITEMS) errors.push(`${base}.attempts: exceeds ${MAX_LIST_ITEMS} entries`);
 
   const priorOwners = new Set();
+  const priorChecks = new Set();
   const priorArtifacts = new Set();
+  const checkKey = (check) => {
+    if (!isObject(check) || !isSafeAgentId(check.agent_id) ||
+        !Array.isArray(check.reviewed_paths) || check.reviewed_paths.length > MAX_LIST_ITEMS ||
+        !check.reviewed_paths.every(isSafeRelativePath) ||
+        !isVisibleText(check.invariant) || !isVisibleText(check.result) ||
+        !["source", "local"].includes(check.method) ||
+        !(check.artifact === null || typeof check.artifact === "string")) return null;
+    return JSON.stringify([check.agent_id, [...check.reviewed_paths].sort(), check.invariant,
+      check.method, check.result, check.artifact]);
+  };
   let previousWave = 0;
   value.slice(0, MAX_LIST_ITEMS).forEach((attempt, index) => {
     const attemptBase = `${base}.attempts[${index}]`;
@@ -618,10 +629,18 @@ function validateAttempts(value, unit, base, errors) {
         if (priorOwners.has(check.agent_id)) {
           errors.push(`${attemptBase}.local_checks[${checkIndex}].agent_id: prior assignment owner evidence must remain in its earlier attempt`);
         }
+        const key = checkKey(check);
+        if (key !== null && priorChecks.has(key)) {
+          errors.push(`${attemptBase}.local_checks[${checkIndex}]: prior check evidence must remain in its earlier attempt`);
+        }
         if (typeof check.artifact === "string" && priorArtifacts.has(check.artifact)) {
           errors.push(`${attemptBase}.local_checks[${checkIndex}].artifact: artifact from an earlier attempt cannot be reused`);
         }
-        if (check.method === "local" && typeof check.artifact === "string") priorArtifacts.add(check.artifact);
+      });
+      attempt.local_checks.forEach((check) => {
+        const key = checkKey(check);
+        if (key !== null) priorChecks.add(key);
+        if (isObject(check) && check.method === "local" && typeof check.artifact === "string") priorArtifacts.add(check.artifact);
       });
     }
     if (hasFreshOwner) priorOwners.add(attempt.agent_id);
@@ -635,6 +654,10 @@ function validateAttempts(value, unit, base, errors) {
       if (!isObject(check)) return;
       if (priorOwners.has(check.agent_id)) {
         errors.push(`${base}.local_checks[${index}].agent_id: prior assignment owner evidence must remain in its archived attempt`);
+      }
+      const key = checkKey(check);
+      if (key !== null && priorChecks.has(key)) {
+        errors.push(`${base}.local_checks[${index}]: prior check evidence must remain in its archived attempt`);
       }
       if (typeof check.artifact === "string" && priorArtifacts.has(check.artifact)) {
         errors.push(`${base}.local_checks[${index}].artifact: artifact from an archived attempt cannot be reused`);

@@ -86,8 +86,10 @@ authentication state, or unrelated host paths. The target-controlled process wri
 only in scratch. After the sandbox and all its processes terminate, only trusted
 parent-side code may promote predeclared scratch-relative files, following the
 promotion procedure block included verbatim in this prompt. You and target code never
-write retained artifacts. If promotion is unavailable or fails for decisive evidence,
-return needs_validation with the exact promotion blocker.
+write retained artifacts. For completion-only tasks, return the predeclared scratch-relative artifact request
+with your proposed result; the parent promotes it after your task and sandbox finish.
+Your request is not evidence of successful promotion. If promotion fails for decisive
+evidence, the parent must retain the exact blocker instead of accepting confirmation.
 Never stress availability, invoke a live target, use a real credential, publish an
 artifact, or continue past the minimum observed effect.
 
@@ -113,7 +115,9 @@ file separately:
    symlinked components.
 2. Walk each parent component from the retained scratch-root descriptor with
    no-follow directory-relative operations; never reopen by path.
-3. Open the leaf no-follow and nonblocking.
+3. Before opening the leaf, enforce a platform-specific guarantee that opening a
+   non-regular file cannot cause a device or other special-file side effect; if
+   unavailable, discard the entry. Then open the leaf no-follow and nonblocking.
 4. Verify with `fstat` that it is a regular file with link count exactly one and
    within the recorded per-file and cumulative byte limits.
 5. Enforce those limits again while reading from that descriptor.
@@ -183,7 +187,7 @@ Return exactly one JSON object, with no surrounding prose:
           "invariant": "specific control checked for this unit",
           "method": "source|local",
           "result": "what source or the bounded check established",
-          "artifact": "agents/<agent-id>/artifacts/file for local, null for source"
+          "artifact": "predeclared scratch-relative request for local, null for source"
         }
       ],
       "candidate_fingerprints": [],
@@ -210,7 +214,7 @@ Each `candidates` entry is schema-shaped except that it uses `proposed_verdict` 
 - `proposed_verdict: "confirmed"`: include every field required by the `confirmed` branch of `report-schema.json` other than `verdict`: `fingerprint`, title, description, `root_cause`, `intended_behavior`, ordered `trace`, `evidence`, `conditions`, target-neutral `execution`, `remediation`, `severity`, and `confidence`. The execution instructions describe only the bounded local check already performed. `payloads` holds the minimum test input, fixture, or native invocation. `observed_result` records actual local output. Overall severity must not exceed observed impact.
 - `proposed_verdict: "needs_validation"`: include every field required by that schema branch other than `verdict`: `fingerprint`, title, description, `claimed_root_cause`, ordered `trace`, `evidence`, nonempty `blockers`, and `validation_plan` with at least one applicable `local` or `deployment` step. Do not invent an inapplicable context. Do not include severity, execution, remediation, reason, or a confirmed `root_cause`. `deployment` is an owner-observed check, not a request to probe a live target.
 
-Every assigned coverage ID appears exactly once in `units`. A `covered` unit needs an owner, nonempty `reviewed_paths` and `checks`, no unresolved fact, and no candidate. A `candidate` unit has the same owned evidence and is the only state that carries linked fingerprints. A `blocked` unit is an owned partial review with nonempty paths, checks, and unresolved facts but no fingerprint. All source paths are repository-relative, never absolute or traversal paths. A trace with several entries begins at `entrypoint`, ends at `sink`, and labels intermediate steps `propagation`. Every check has its own canonical lowercase `agent_id` and nonempty `reviewed_paths`; the unit-level list is exactly the union of those owned paths. A `source` check uses `artifact: null`. A `local` check uses one successfully parent-promoted regular file beneath `agents/<check.agent_id>/artifacts/`; this permits a verifier to add independently owned evidence without taking ownership from the hunter. Never link scratch, an output-root file, or another check owner's artifact.
+Every assigned coverage ID appears exactly once in `units`. A `covered` unit needs an owner, nonempty `reviewed_paths` and `checks`, no unresolved fact, and no candidate. A `candidate` unit has the same owned evidence and is the only state that carries linked fingerprints. A `blocked` unit is an owned partial review with nonempty paths, checks, and unresolved facts but no fingerprint. All source paths are repository-relative, never absolute or traversal paths. A trace with several entries begins at `entrypoint`, ends at `sink`, and labels intermediate steps `propagation`. Every check has its own canonical lowercase `agent_id` and nonempty `reviewed_paths`; the unit-level list is exactly the union of those owned paths. A `source` check uses `artifact: null`. In the returned proposal, a `local` check's `artifact` is a predeclared scratch-relative request, not a retained path. After the task and sandbox terminate, the parent promotes it and substitutes the resulting `agents/<check.agent_id>/artifacts/` path before accepting the check into the ledger. Never link scratch, an output-root file, or another check owner's artifact in the ledger.
 
 ## Parent consolidation and ledger update
 
@@ -236,13 +240,13 @@ Immediately after each hunter wave, spend the reserved invocation on one fresh `
       "reason": "source-backed coverage gap"
     }
   ],
-  "reassign_ids": ["existing-id-that-did-not-close"],
-  "resolved_prior_leads": ["fingerprint"],
+  "reassign_ids": [{"coverage_id": "existing-id-that-did-not-close", "reason": "source-backed reason", "source_refs": ["repo/relative/file:line"]}],
+  "resolved_prior_leads": [{"fingerprint": "fingerprint", "reason": "source-backed reason", "source_refs": ["repo/relative/file:line"]}],
   "stop": false
 }
 ```
 
-The critic checks for unmapped entry points, unchecked parallel paths, missing lifecycle modes, selected companion classes without a unit, unjustified exclusions, units closed without paths/checks, and prior `needs_validation` or changed-source gaps that no unit addresses. It proposes coverage, not findings. `stop` is the critic's own assessment: `true` only when it accepts no `missing_units` and no `reassign_ids`; the parent's loop condition below, not `stop` alone, decides whether another wave runs. For each fingerprint in `resolved_prior_leads`, the parent marks the linked unit or prior-lead entry resolved and records the critic's source-backed reason.
+The critic checks for unmapped entry points, unchecked parallel paths, missing lifecycle modes, selected companion classes without a unit, unjustified exclusions, units closed without paths/checks, and prior `needs_validation` or changed-source gaps that no unit addresses. It proposes coverage, not findings. `stop` is the critic's own assessment: `true` only when it accepts no `missing_units` and no `reassign_ids`; the parent's loop condition below, not `stop` alone, decides whether another wave runs. For each entry in `reassign_ids` or `resolved_prior_leads`, require a nonempty reason and source references and check them against current source; reject unsupported entries. Record each accepted reassignment reason with its linked unit. Mark each accepted prior-lead coverage entry resolved and record its reason and source references; this bookkeeping does not change a finding verdict, erase an unresolved candidate, or replace independent candidate verification.
 
 The parent rejects proposed units outside the review scope or source/local boundary, derives canonical IDs for accepted units, and deduplicates them against current units. A prior same-source completed unit may supply evidence; prior `deferred`, `blocked`, `out_of_scope`, or changed-source units become current work and never suppress an accepted unit. Fail rather than merge a canonical ID collision. For each legitimate `reassign_id` with live `blocked`, `covered`, or `candidate` evidence, append that exact terminal record to the unit's `attempts` with the critic's source-backed `reassignment_reason`. Preserve its owner, checks, artifacts, fingerprints, and unresolved facts in that archive. Increment the live `wave`; the next hunter must be a fresh owner and receives an `in_progress` unit with empty live evidence. The hunter's terminal result writes only its new evidence into the live fields. Never copy an archived owner's checks or artifacts into the new live attempt. Sort IDs and validate the ledger before another assignment. In `standard` and `deep`, when the post-wave critic reports no accepted `missing_units` or legitimate `reassign_ids` and no `planned` units remain, spend the separately reserved invocation on a distinct final-clean critic. Complete coverage only when that critic also returns no accepted work. If it finds work, queue it and repeat the wave, post-wave critic, and final-clean process. If time or resources force an early stop, mark every untouched unit `deferred`, preserve the critic's reason, and disclose the gap in the report. Never use a silent wave or agent cap as evidence of complete coverage.
 

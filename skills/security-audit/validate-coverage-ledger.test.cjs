@@ -439,6 +439,42 @@ test("preserves candidate provenance when reassignment must be deferred", () => 
   assert.deepEqual(errorsFor([deferred]), []);
 });
 
+test("rejects archived verifier evidence in a reassigned unit", () => {
+  const verifierCheck = sourceCheck("verifier-1");
+  const reassigned = unit({
+    attempts: [archivedAttempt({ local_checks: [sourceCheck(), verifierCheck] })],
+    wave: 2,
+    status: "covered",
+    agent_id: "hunter-2",
+    reviewed_paths: ["src/router.ts"],
+    local_checks: [sourceCheck("hunter-2"), verifierCheck],
+  });
+  assert(errorsFor([reassigned]).some((error) => error.includes("prior check evidence")));
+});
+
+test("accepts new verifier evidence in a reassigned unit", () => {
+  const reassigned = unit({
+    attempts: [archivedAttempt({ local_checks: [sourceCheck(), sourceCheck("verifier-1")] })],
+    wave: 2,
+    status: "covered",
+    agent_id: "hunter-2",
+    reviewed_paths: ["src/router.ts"],
+    local_checks: [sourceCheck("hunter-2"), sourceCheck("verifier-1", { result: "A new check reviewed the parallel route." })],
+  });
+  assert.deepEqual(errorsFor([reassigned]), []);
+});
+
+test("accepts shared local artifact within one archived attempt", () => {
+  const checks = [localCheck(), localCheck("hunter-1", { invariant: "A second invariant." })];
+  const deferred = unit({
+    attempts: [archivedAttempt({ local_checks: checks })],
+    wave: 2,
+    status: "deferred",
+    unresolved: ["budget"],
+  });
+  assert.deepEqual(errorsFor([deferred]), []);
+});
+
 test("rejects reassignment owner reuse and evidence mixing", () => {
   const reusedOwner = unit({
     attempts: [archivedAttempt()],
