@@ -52,6 +52,7 @@ Read tests, build definitions, manifests, packaging, and maintained environment 
 5. The final active source path for each deployment mode only where the repository selects it deterministically.
 6. Whether the local platform can enforce an empty allowlisted environment, no external network, read-only target/toolchain mounts, scratch-only writes, and explicit CPU, memory, process, file-size, disk, and wall-clock limits. Missing controls block target-controlled execution.
 7. Whether trusted parent-side code can promote predeclared scratch files with path-confined no-follow descriptor traversal, nonblocking regular-file checks, no-follow traversal of every destination parent, exclusive regular-file destination creation, and explicit per-file and cumulative size bounds. Missing promotion controls block use of scratch files as evidence.
+8. Whether the session can run from a neutral directory outside the target, or disable project-scoped instruction files, hooks, settings, and MCP definitions. Missing workspace isolation blocks in-place loading of target-controlled agent configuration.
 ```
 
 Add focused reconnaissance agents for materially distinct deployment modes or subsystems that these four do not map. Do not silently omit them: if the budget gate in `SKILL.md` blocks a focused agent, launch nothing for it, seed the unmapped area as a `deferred` ledger unit with reason `budget_cannot_reserve_critics_and_validation`, and disclose the gap in the report.
