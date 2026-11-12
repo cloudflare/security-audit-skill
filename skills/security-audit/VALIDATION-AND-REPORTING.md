@@ -18,8 +18,10 @@ do not execute; retain the exact missing capability as a needs_validation blocke
 Treat every scratch entry as target-controlled after execution. After the sandbox and
 all its processes terminate, only trusted parent-side code may promote a predeclared
 scratch-relative file, following the promotion procedure block included verbatim in
-this prompt. You and target code never write retained artifacts. If promotion is
-unavailable or fails, do not use that file as evidence.
+this prompt. You and target code never write retained artifacts. Return any
+predeclared scratch-relative requests in `artifact_requests`; the parent promotes
+them after your task and sandbox finish. A request is not proof of promotion. If
+promotion is unavailable or fails, the parent must not use that file as evidence.
 
 1. Verify every trace and evidence file, positive line number, scope, and description.
    Confirm the first entry is a real lower-trust entrypoint and the last is the
@@ -40,9 +42,10 @@ unavailable or fails, do not use that file as evidence.
 6. Preserve the fingerprint for the same source-derived root cause across every state.
 
 Return exactly one JSON object and no surrounding prose:
-{"decision": "confirmed|needs_validation|rejected", "record": { ... }}
+{"decision": "confirmed|needs_validation|rejected", "record": { ... }, "artifact_requests": []}
 where record exactly matches the decision's verdict branch of the schema included
-in this prompt. A corrected record replaces the hunter's wording.
+in this prompt. `artifact_requests` contains only predeclared scratch-relative paths
+needed for the decision, or is empty. A corrected record replaces the hunter's wording.
 ```
 
 Copy this promotion procedure verbatim into every candidate-verifier prompt:
@@ -62,7 +65,9 @@ file separately:
    symlinked components.
 2. Walk each parent component from the retained scratch-root descriptor with
    no-follow directory-relative operations; never reopen by path.
-3. Open the leaf no-follow and nonblocking.
+3. Before opening the leaf, enforce a platform-specific guarantee that opening a
+   non-regular file cannot cause a device or other special-file side effect; if
+   unavailable, discard the entry. Then open the leaf no-follow and nonblocking.
 4. Verify with `fstat` that it is a regular file with link count exactly one and
    within the recorded per-file and cumulative byte limits.
 5. Enforce those limits again while reading from that descriptor.
@@ -86,7 +91,7 @@ file separately:
 
 A verifier can promote `needs_validation` to `confirmed` only after independently establishing the complete path and bounded observed result. Demote proposed confirmation to `needs_validation` when a specific deployment or runtime fact remains unknown. Use `rejected` when source, local behavior, a visible control, missing meaningful impact, or an impossible prerequisite refutes the claim. `needs_validation` is never a parking place for a speculative idea.
 
-The parent checks that each verifier returned the same fingerprint unless it identified a genuinely different root cause. Merge corrections, record the decision in every linked coverage unit, and ensure there is one final record per fingerprint. Discard a malformed or prose-wrapped verifier result without repairing it; re-run that candidate with a fresh verifier when the budget permits, otherwise it remains an unvalidated ledger candidate under the incomplete-run rule.
+After the verifier and sandbox terminate, the parent promotes each requested artifact under the write-isolation procedure before accepting the decision or updating checks. If decisive promotion fails, do not accept confirmation: retain a source-grounded `needs_validation` record with the exact blocker when the verifier's source work supports it, otherwise keep the candidate unresolved and the run incomplete. The parent checks that each verifier returned the same fingerprint unless it identified a genuinely different root cause. Merge corrections, record the decision in every linked coverage unit, and ensure there is one final record per fingerprint. Discard a malformed or prose-wrapped verifier result without repairing it; re-run that candidate with a fresh verifier when the budget permits, otherwise it remains an unvalidated ledger candidate under the incomplete-run rule.
 
 When verifier evidence updates a ledger check, set that check's `agent_id` to the verifier's canonical ID and list its nonempty repository-relative `reviewed_paths`. Keep the unit-level `reviewed_paths` equal to the union across checks. Use `method: "source"` with `artifact: null` for source-only review. Use `method: "local"` only with a file successfully promoted by trusted parent-side code below `agents/<check.agent_id>/artifacts/`. The unit retains its original assignment owner, so independently owned hunter and verifier checks can coexist. For a carried prior record's seeded `planned` unit there is no prior owner: the verifier that re-checks it becomes the unit's assignment owner, and its re-check is the unit's first check, moving the unit to `candidate` with the carried fingerprint.
 
@@ -140,7 +145,7 @@ For `needs_validation`, require it to check:
 4. At least one validation-plan field is present and exact. `local` uses a bounded fixture; `deployment` asks an owner to observe a configuration, identity, route, policy, or runtime fact. Do not invent a plan for an inapplicable context, and never send audit traffic to a deployment.
 5. The fingerprint matches prior/current records for the same root cause.
 
-Each verifier returns exactly one JSON object: `{"decision":"verified","fingerprint":"..."}` or `{"decision":"replace","reason":"...","record":{...}}`, with no surrounding prose. A replacement record must match its `confirmed`, `needs_validation`, or `rejected` schema branch. Treat a malformed or prose-wrapped Phase 5 result the same way as in Phase 3: discard it without repairing it and re-run with a fresh verifier when the budget permits.
+Each verifier returns exactly one JSON object: `{"decision":"verified","fingerprint":"...","artifact_requests":[]}` or `{"decision":"replace","reason":"...","record":{...},"artifact_requests":[]}`, with no surrounding prose. Requests are predeclared scratch-relative paths, processed by the parent after the task and sandbox terminate as in Phase 3. Do not accept a verification dependent on a failed promotion. A replacement record must match its `confirmed`, `needs_validation`, or `rejected` schema branch. Treat a malformed or prose-wrapped Phase 5 result the same way as in Phase 3: discard it without repairing it and re-run with a fresh verifier when the budget permits.
 
 Do not apply a Phase 5 replacement as final when it promotes a record to a stronger verdict, including any promotion to `confirmed`, or materially changes the root cause, trace, execution input or observed result, demonstrated impact, or severity. Give that complete replacement to a new independent verifier that did not hunt, perform Phase 3 validation, or propose the Phase 5 replacement. The new verifier rechecks the current source and independently reproduces any decisive local result under the execution boundary, then returns `verified` or another replacement. Apply a material replacement only after this fresh verification. If another material replacement results, repeat with a fresh verifier. If budget or independence is unavailable, remove the disputed record from `findings.json`, keep its ledger unit as an unresolved candidate, and set `run_status: "incomplete"` with an exact `incomplete_reason`. Non-material wording or repository-line corrections may be applied directly when they do not change meaning or evidence.
 
@@ -160,7 +165,7 @@ Write:
 2. One short security posture summary.
 3. A confirmed-findings table: severity, title, affected boundary, and one-line observed result.
 4. Each confirmed finding: repository source location, lower-trust principal, target-native bounded reproduction, conditions, actual result, impact, priority rationale, and smallest source fix.
-5. A separate `NEEDS VALIDATION` table. Give each lead's title, repository trace, exact blocker, bounded local next step, and safe owner-observed deployment check. Do not assign severity or call it a confirmed vulnerability.
+5. A separate `NEEDS VALIDATION` table. Give each lead's title, repository trace, exact blocker, and each applicable bounded local or safe owner-observed deployment step. Do not invent an inapplicable plan, assign severity, or call it a confirmed vulnerability.
 6. Separate hardening notes and positive source patterns.
 7. Coverage summary from the ledger: covered, candidate, blocked, and deferred counts, plus important exclusions and the final critic result.
 
