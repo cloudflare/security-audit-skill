@@ -65,9 +65,11 @@ npx skills add https://github.com/cloudflare/security-audit-skill \
 
 Run `npx skills --help` for agent-selection and non-interactive options.
 
+When you audit a repository you do not own, install the skill with `--global` (or from a pinned checkout outside that repository), so the target cannot shadow or modify the copy the audit runs.
+
 ## Usage
 
-Start your coding agent in (or pointed at) the codebase you want to audit, then ask it to do a security audit:
+Start your coding agent in a neutral directory and point it at the codebase you want to audit, then ask it to do a security audit:
 
 ```
 security audit this codebase
@@ -80,6 +82,8 @@ find security vulnerabilities in ./src
 ```
 do a security review, output to ~/audits/my-project
 ```
+
+Do not start the agent inside a repository you do not trust unless you also disable the platform's project-level instruction and configuration loading for that session. Coding agents commonly load `AGENTS.md`, `CLAUDE.md`, `.cursor/rules`, project hooks, settings, and MCP definitions from the working directory before the skill runs. A malicious target can use those files to steer or suppress the audit, or to run commands.
 
 The skill activates automatically when the request matches its trigger (security audit, find vulnerabilities, pen-test the code, etc.). A direct codebase audit or pen-test request uses full audit mode. Security questions and focused vulnerability work use guidance mode unless you request report artifacts. In full audit mode, an unspecified output directory defaults to `~/security-audit-skill/<repo-name>/run-<N>`. The workflow writes inside the target repository only when you explicitly select a directory that version control ignores.
 
