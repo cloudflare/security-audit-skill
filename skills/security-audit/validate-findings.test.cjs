@@ -273,6 +273,33 @@ test("oneOf requires exactly one passing branch", () => {
     .some((error) => error.includes("matched 0")));
 });
 
+test("names the verdict when a record matches no verdict branch", () => {
+  const allowed = "(expected one of \"confirmed\", \"needs_validation\", \"rejected\")";
+  for (const verdict of ["Rejected", "false_positive", 7, null]) {
+    const record = rejected();
+    record.verdict = verdict;
+    const errors = errorsFor([record]);
+    assert(errors.some((error) => error.includes("matched 0")));
+    assert(errors.some((error) => error.startsWith("$[0].verdict: invalid value ") && error.endsWith(allowed)),
+      `no verdict diagnostic for ${JSON.stringify(verdict)}`);
+  }
+
+  const missing = rejected();
+  delete missing.verdict;
+  assert(errorsFor([missing]).includes("$[0]: missing required field \"verdict\""));
+
+  const mismatched = rejected();
+  mismatched.severity = confirmed().severity;
+  const mismatchedErrors = errorsFor([mismatched]);
+  assert(mismatchedErrors.some((error) => error.includes("unexpected field \"severity\"")));
+  assert(!mismatchedErrors.some((error) => error.includes("$[0].verdict")));
+
+  assert.deepEqual(
+    collect(7, { oneOf: [{ type: "string" }, { minimum: 10 }] }, "$test"),
+    ["$test: must match exactly one schema in oneOf; matched 0"],
+  );
+});
+
 test("rejects duplicate fingerprints and unique array entries", () => {
   const first = confirmed();
   const second = rejected();
