@@ -43,7 +43,7 @@ Use dummy principals, fixtures, and secrets. Do not probe deployed endpoints, ex
 
 ### Isolation gate (fail closed)
 
-The controls above describe the environment they need; they do not prove one exists. Before any target-controlled process starts, prove it with the gate:
+Before starting any target-controlled process, run the gate with the same allowlisted environment that will be passed to that process:
 
 ```bash
 node validate-environment.cjs --scratch <agent-scratch-dir> \
@@ -51,7 +51,9 @@ node validate-environment.cjs --scratch <agent-scratch-dir> \
   --cache <agent-scratch-dir>/cache
 ```
 
-`RESULT: PASS` is required. On `RESULT: FAIL`, isolation is absent or unproven: do not execute target code, do not repair the environment by clearing anything, and report the failing check as a `needs_validation` blocker with its exact reason. The gate reads paths and compares them; it never creates, moves, or deletes anything.
+`--home`, `--tmp`, and `--cache` assert expected paths against that environment. Set `HOME` on POSIX or `USERPROFILE` on Windows, the platform's temp variable, and `XDG_CACHE_HOME` or Windows `LOCALAPPDATA`. For `LOCALAPPDATA`, the expected cache path is its `cache` subdirectory. Give all configured home, temp, and cache variables absolute paths inside scratch. The gate compares normalized path values. The sandbox enforces filesystem boundaries.
+
+Start target code only after `RESULT: PASS`. On failure, leave the host environment intact and report the exact failed check as a `needs_validation` blocker.
 
 Isolation is built **beside** the current environment, never by removing it. Deleting, moving, truncating, or "resetting" anything under the host home directory, a package-manager cache, an interpreter installation, or a credential store is not setup, not cleanup, and not reconnaissance. An environment is never made clean by taking the dirt out of the real one.
 
@@ -66,6 +68,8 @@ node host-lock.cjs release --lock <output-dir>/.host.lock --owner <agent-id>
 ```
 
 If the lock is held, stop and report the holder; do not retry in a loop. Never run two host mutations concurrently — installers and package managers abort each other and leave half-written state. If the mutation is not strictly required to establish a finding, do not take the lock at all: the default is no host mutation.
+
+Lock updates use a short-lived sibling directory named `<lock-path>.guard`. `--force` can reclaim an expired lock after taking this guard. If an interrupted update leaves the guard behind, verify that its updater and the host mutation have both stopped before removing the guard directory.
 
 ## Full audit setup
 

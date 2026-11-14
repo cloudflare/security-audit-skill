@@ -45,12 +45,34 @@ function readLock(lockPath) {
   }
 }
 
+function guardPath(lockPath) {
+  return `${lockPath}.guard`;
+}
+
+function withLockGuard(lockPath, update) {
+  const guard = guardPath(lockPath);
+  try {
+    fs.mkdirSync(guard);
+  } catch (error) {
+    if (error.code === "EEXIST") {
+      throw new LockError(`lock is held for an update: ${guard}`);
+    }
+    throw error;
+  }
+
+  try {
+    return update();
+  } finally {
+    fs.rmdirSync(guard);
+  }
+}
+
 /**
  * Inspect a lock without taking it.
  * @returns {{held: boolean, stale: boolean, info: object|null}}
  */
 function inspectLock(lockPath, ttlSeconds = DEFAULT_TTL_SECONDS) {
-  if (!fs.existsSync(lockPath)) return { held: false, stale: false, info: null };
+  if (!fs.existsSync(lockPath)) return { held: fs.existsSync(guardPath(lockPath)), stale: false, info: null };
   const info = readLock(lockPath);
   let ageSeconds = null;
   try {
@@ -90,46 +112,44 @@ function acquireLock(options) {
 
   const attempt = () => fs.writeFileSync(lockPath, payload, { encoding: "utf8", flag: "wx" });
 
-  try {
-    attempt();
-    return { acquired: true, info: readLock(lockPath) };
-  } catch (error) {
-    if (error.code !== "EEXIST") throw error;
-  }
-
-  const current = inspectLock(lockPath, ttlSeconds);
-  if (current.stale && force) {
-    // Reclaim: remove and retry the exclusive create. A racing holder loses the
-    // same way it would have lost the first attempt.
-    try {
-      fs.unlinkSync(lockPath);
-    } catch (error) {
-      // Someone else removed it first; the exclusive create below decides.
-    }
+  // Serialize the check, removal and replacement with all other lock updates.
+  return withLockGuard(lockPath, () => {
     try {
       attempt();
-      return { acquired: true, reclaimed: true, info: readLock(lockPath) };
+      return { acquired: true, info: readLock(lockPath) };
     } catch (error) {
-      throw new LockError(`lock is held and reclaim failed: ${error.code}`);
+      if (error.code !== "EEXIST") throw error;
     }
-  }
 
-  const holder = current.info && current.info.owner ? current.info.owner : "unknown";
-  const why = current.stale ? " (stale; pass --force to reclaim)" : "";
-  throw new LockError(`lock is held by ${holder}${why}`);
+    const current = inspectLock(lockPath, ttlSeconds);
+    if (current.stale && force) {
+      fs.unlinkSync(lockPath);
+      attempt();
+      return { acquired: true, reclaimed: true, info: readLock(lockPath) };
+    }
+
+    const holder = current.info && current.info.owner ? current.info.owner : "unknown";
+    const why = current.stale ? " (stale; pass --force to reclaim)" : "";
+    throw new LockError(`lock is held by ${holder}${why}`);
+  });
 }
 
 /** Release only when this owner holds it. */
 function releaseLock(options) {
   const { lockPath, owner } = options || {};
   if (!lockPath || !path.isAbsolute(lockPath)) throw new LockError("lockPath must be absolute");
-  if (!fs.existsSync(lockPath)) return { released: false, reason: "not-held" };
-  const info = readLock(lockPath);
-  if (!info || info.owner !== owner) {
-    return { released: false, reason: "not-owner", holder: info && info.owner };
+  if (!fs.existsSync(lockPath) && !fs.existsSync(guardPath(lockPath))) {
+    return { released: false, reason: "not-held" };
   }
-  fs.unlinkSync(lockPath);
-  return { released: true };
+  return withLockGuard(lockPath, () => {
+    if (!fs.existsSync(lockPath)) return { released: false, reason: "not-held" };
+    const info = readLock(lockPath);
+    if (!info || info.owner !== owner) {
+      return { released: false, reason: "not-owner", holder: info && info.owner };
+    }
+    fs.unlinkSync(lockPath);
+    return { released: true };
+  });
 }
 
 function parseArgs(argv) {
@@ -161,17 +181,9 @@ function main(argv) {
     options = parseArgs(argv);
     switch (options.command) {
       case "acquire": {
-        try {
-          const result = acquireLock(options);
-          process.stdout.write(JSON.stringify(result) + "\n");
-          return 0;
-        } catch (error) {
-          if (error instanceof LockError && /^lock is held/.test(error.message)) {
-            process.stderr.write(`${error.message}\n`);
-            return 1;
-          }
-          throw error;
-        }
+        const result = acquireLock(options);
+        process.stdout.write(JSON.stringify(result) + "\n");
+        return 0;
       }
       case "release": {
         const result = releaseLock(options);
@@ -190,6 +202,7 @@ function main(argv) {
     }
   } catch (error) {
     process.stderr.write(`${error.message}\n`);
+    if (error instanceof LockError && /^lock is held/.test(error.message)) return 1;
     process.stderr.write("usage: node host-lock.cjs <acquire|release|status> --lock <path> [--owner <id>] [--purpose <text>] [--ttl <seconds>] [--force] [--json]\n");
     return 2;
   }

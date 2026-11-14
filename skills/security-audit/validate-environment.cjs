@@ -6,9 +6,11 @@
  * Usage:
  *   node validate-environment.cjs --scratch <dir> [--json]
  *   node validate-environment.cjs --scratch <dir> --home <dir> --tmp <dir> --cache <dir> [...]
+ * Run with the environment intended for target code. The optional path flags
+ * are assertions about that environment.
  *
  * Exit codes:
- *   0  PASS  every isolation check holds; target-controlled processes may run
+ *   0  PASS  the environment passes the path checks
  *   1  FAIL  isolation is absent or unproven; do not execute target code
  *   2  usage error (no checks were performed)
  *
@@ -18,8 +20,8 @@
  * clean environment by emptying the current one destroys the host. This gate
  * turns the description into a check that fails closed.
  *
- * The gate proves only what it can observe. It never mutates anything; it reads
- * paths, resolves them, and compares. When it cannot prove isolation it fails.
+ * The gate compares normalized path values. Filesystem isolation is enforced
+ * by the sandbox. This check performs no writes.
  */
 
 "use strict";
@@ -29,6 +31,8 @@ const os = require("os");
 const path = require("path");
 
 const WINDOWS = process.platform === "win32";
+const HOME_VARIABLE = WINDOWS ? "USERPROFILE" : "HOME";
+const TEMP_VARIABLES = WINDOWS ? ["TEMP", "TMP"] : ["TMPDIR", "TMP", "TEMP"];
 
 /** Normalize a path for comparison. Windows paths are case-insensitive. */
 function normalizePath(value) {
@@ -51,12 +55,17 @@ function isFilesystemRoot(value) {
   return path.dirname(resolved) === resolved;
 }
 
-function readEnv(env, names) {
-  for (const name of names) {
-    const value = env[name];
-    if (typeof value === "string" && value.trim() !== "") return value;
-  }
-  return undefined;
+function isAbsolutePath(value) {
+  return typeof value === "string" && path.isAbsolute(value) &&
+    (!WINDOWS || path.parse(value).root.length > 1);
+}
+
+function readEnvPaths(env, names) {
+  return Object.entries(env).flatMap(([key, value]) => {
+    const name = WINDOWS ? key.toUpperCase() : key;
+    if (!names.includes(name) || typeof value !== "string" || value === "") return [];
+    return [{ name, value }];
+  });
 }
 
 /**
@@ -64,10 +73,10 @@ function readEnv(env, names) {
  *
  * @param {object} options
  * @param {string} options.scratch absolute scratch root for this agent
- * @param {string} [options.home] expected isolated HOME (defaults to the environment)
- * @param {string} [options.tmp] expected isolated temp directory
- * @param {string[]} [options.caches] expected isolated cache directories
- * @param {object} [env] environment to inspect (defaults to process.env)
+ * @param {string} [options.home] expected value of the platform's home variable
+ * @param {string} [options.tmp] expected value of the effective temp variable
+ * @param {string[]} [options.caches] expected paths among the configured caches
+ * @param {object} [env] environment that will run target code (defaults to process.env)
  * @returns {{ok: boolean, checks: Array<{id: string, ok: boolean, detail: string}>}}
  */
 function validateEnvironment(options, env = process.env) {
@@ -79,7 +88,7 @@ function validateEnvironment(options, env = process.env) {
     record("scratch-provided", false, "no --scratch directory was given");
     return { ok: false, checks };
   }
-  if (!path.isAbsolute(scratch)) {
+  if (!isAbsolutePath(scratch)) {
     record("scratch-absolute", false, `scratch is not absolute: ${scratch}`);
     return { ok: false, checks };
   }
@@ -104,65 +113,62 @@ function validateEnvironment(options, env = process.env) {
   }
   record("scratch-exists", true, scratch);
 
-  // The scratch root must not be the host home directory itself. Writing "inside
-  // the scratch dir" is fine; making the host home the scratch dir is not.
-  const realHome = os.homedir();
-  if (normalizePath(scratch) === normalizePath(realHome)) {
-    record("scratch-not-host-home", false, `scratch is the host home directory: ${scratch}`);
-  } else {
-    record("scratch-not-host-home", true, `host home is ${realHome}`);
+  // os.homedir() reads the same environment that we are validating.
+  let realHome;
+  try {
+    realHome = os.userInfo().homedir;
+  } catch {
+    record("scratch-not-host-home", false, "could not determine the OS account's home directory");
+    return { ok: false, checks };
   }
-
-  const home = options.home || readEnv(env, ["HOME", "USERPROFILE"]);
-  if (!home) {
-    record("home-isolated", false, "HOME/USERPROFILE is unset; isolation is unproven");
-  } else if (!isInside(home, scratch)) {
-    record("home-isolated", false, `HOME is outside scratch: ${home}`);
-  } else {
-    record("home-isolated", true, home);
+  if (!isAbsolutePath(realHome)) {
+    record("scratch-not-host-home", false, "the OS account has no absolute home directory");
+    return { ok: false, checks };
   }
+  const scratchIsHostHome = normalizePath(scratch) === normalizePath(realHome);
+  record("scratch-not-host-home", !scratchIsHostHome,
+    scratchIsHostHome ? `scratch is the host home directory: ${scratch}` : `host home is ${realHome}`);
 
-  const tmp = options.tmp || readEnv(env, ["TMPDIR", "TEMP", "TMP"]);
-  if (!tmp) {
-    record("tmp-isolated", false, "TMPDIR/TEMP/TMP is unset; isolation is unproven");
-  } else if (!isInside(tmp, scratch)) {
-    record("tmp-isolated", false, `temporary directory is outside scratch: ${tmp}`);
-  } else {
-    record("tmp-isolated", true, tmp);
-  }
-
-  const caches = options.caches && options.caches.length > 0
-    ? options.caches
-    : [
-        readEnv(env, ["XDG_CACHE_HOME"]),
-        readEnv(env, ["LOCALAPPDATA"]) && path.join(readEnv(env, ["LOCALAPPDATA"]), "cache"),
-      ].filter(Boolean);
-
-  if (caches.length === 0) {
-    record("caches-isolated", false, "no cache directory is configured; isolation is unproven");
-  } else {
-    const outside = caches.filter((cache) => !isInside(cache, scratch));
-    if (outside.length > 0) {
-      record("caches-isolated", false, `cache directory outside scratch: ${outside.join(", ")}`);
+  function checkPaths(id, configured, actual, expected, missing) {
+    const invalid = configured.find(({ value }) => !isAbsolutePath(value) || !isInside(value, scratch));
+    if (invalid) {
+      record(id, false, `${invalid.name} must be absolute and inside scratch: ${invalid.value}`);
+    } else if (actual.length === 0) {
+      record(id, false, missing);
+    } else if (expected.some((value) => !isAbsolutePath(value) ||
+      !actual.some((observed) => normalizePath(observed) === normalizePath(value)))) {
+      record(id, false, `expected ${expected.join(", ")} but the environment configured ${actual.join(", ")}`);
     } else {
-      record("caches-isolated", true, caches.join(", "));
+      record(id, true, actual.join(", "));
     }
   }
 
-  // A gate that cannot tell the difference between "isolated" and "the real
-  // profile" must not report success.
-  const realTemp = os.tmpdir();
-  if (normalizePath(home || "") === normalizePath(realHome) && normalizePath(scratch) !== normalizePath(realHome)) {
-    record("real-home-unused", false, `HOME still resolves to the host home: ${realHome}`);
-  } else {
-    record("real-home-unused", true, `host home ${realHome} is not the run's HOME`);
-  }
+  const homes = readEnvPaths(env, ["HOME", "USERPROFILE"]);
+  const actualHome = homes.find(({ name }) => name === HOME_VARIABLE);
+  checkPaths("home-isolated", homes, actualHome ? [actualHome.value] : [],
+    options.home === undefined ? [] : [options.home], `${HOME_VARIABLE} is unset; isolation is unproven`);
+
+  const temps = readEnvPaths(env, ["TMPDIR", "TEMP", "TMP"]);
+  const tempName = TEMP_VARIABLES.find((name) => temps.some((entry) => entry.name === name));
+  const actualTemp = temps.find(({ name }) => name === tempName);
+  checkPaths("tmp-isolated", temps, actualTemp ? [actualTemp.value] : [],
+    options.tmp === undefined ? [] : [options.tmp], `${TEMP_VARIABLES.join("/")} is unset; isolation is unproven`);
+
+  const caches = readEnvPaths(env, ["XDG_CACHE_HOME", "LOCALAPPDATA"]);
+  const actualCaches = caches.map(({ name, value }) => name === "LOCALAPPDATA" ? path.join(value, "cache") : value);
+  checkPaths("caches-isolated", caches, actualCaches, options.caches ?? [],
+    "XDG_CACHE_HOME/LOCALAPPDATA is unset; cache isolation is unproven");
+
+  const hostHomeUsed = homes.some(({ value }) =>
+    isAbsolutePath(value) && normalizePath(value) === normalizePath(realHome));
+  record("real-home-unused", !hostHomeUsed,
+    hostHomeUsed ? `a home variable still points to the host home: ${realHome}` : "home variables avoid the host home");
 
   return { ok: checks.every((check) => check.ok), checks };
 }
 
 function parseArgs(argv) {
-  const options = { scratch: "", home: "", tmp: "", caches: [], json: false };
+  const options = { scratch: "", caches: [], json: false };
   for (let index = 0; index < argv.length; index += 1) {
     const flag = argv[index];
     const next = () => {
