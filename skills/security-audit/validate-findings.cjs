@@ -369,11 +369,21 @@ function validate(value, schema, p, errors) {
     if (passingIndexes.length !== 1) {
       errors.push(`${p}: must match exactly one schema in oneOf; matched ${passingIndexes.length}`);
       if (passingIndexes.length === 0 && value !== null && typeof value === "object" && !Array.isArray(value)) {
-        const matchingDiscriminators = schema.oneOf
-          .map((branch, index) => ({ discriminator: findDiscriminator(branch), index }))
+        const discriminators = schema.oneOf
+          .map((branch, index) => ({ discriminator: findDiscriminator(branch), index }));
+        const matchingDiscriminators = discriminators
           .filter(({ discriminator }) => discriminator && hasOwn(value, discriminator.key) && deepEqual(value[discriminator.key], discriminator.value));
         if (matchingDiscriminators.length === 1) {
           errors.push(...results[matchingDiscriminators[0].index]);
+        } else if (matchingDiscriminators.length === 0 && discriminators.every(({ discriminator }) => discriminator && discriminator.key === discriminators[0].discriminator.key)) {
+          // No branch claims this value, so name the shared discriminator instead of leaving only "matched 0".
+          const key = discriminators[0].discriminator.key;
+          if (hasOwn(value, key)) {
+            const allowed = discriminators.map(({ discriminator }) => safeQuote(discriminator.value)).join(", ");
+            errors.push(`${propertyPath(p, key)}: invalid value ${safeQuote(value[key])} (expected one of ${allowed})`);
+          } else {
+            errors.push(`${p}: missing required field ${safeQuote(key)}`);
+          }
         }
       }
     }
