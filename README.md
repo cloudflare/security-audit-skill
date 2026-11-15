@@ -89,6 +89,16 @@ The skill activates automatically when the request matches its trigger (security
 - Node.js for the zero-dependency findings and coverage-ledger validators
 - An OS-enforced sandbox for target-controlled builds, tests, processes, browsers, emulators, fuzzers, and fixtures. It must disable external networking, use a sanitized allowlisted environment, enforce resource limits, and allow writes only to assigned scratch paths. Without these controls, the workflow keeps the lead as `needs_validation` instead of executing target code.
 
+## Static skill scanners
+
+Pattern-based skill scanners may flag this skill as high risk. That is expected. The skill has to describe attacks so an auditor can recognise them, and the validator tests have to feed unsafe input to prove it is rejected. In practice, the flagged text comes from:
+
+- **Attack-class guides** (`ATTACK-CLASSES.md` and the domain companions such as `AI-AND-LLM.md` or `DESKTOP-MOBILE-AND-LOCAL-IPC.md`). These name secrets files, memory deletion, world-writable sockets, missing permission checks, and similar patterns as things to hunt for in the target.
+- **Guardrails in `SKILL.md`**, such as the instruction not to run the full workflow without an explicit request.
+- **Validator test fixtures** (`validate-findings.test.cjs`, `validate-coverage-ledger.test.cjs`). Strings such as `/etc/passwd` are inputs the validators must reject. Both validators reject absolute source paths in records, and read only the file named on their command line (plus the bundled `report-schema.json`).
+
+Review each flag against the line it cites. A scanner score on its own does not show a defect in the skill.
+
 ## Design principles
 
 - **Only confirm established boundary failures.** Keep a source-grounded blocked lead as `needs_validation` with its exact unresolved fact.
