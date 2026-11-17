@@ -90,6 +90,10 @@ write retained artifacts. If promotion is unavailable or fails for decisive evid
 return needs_validation with the exact promotion blocker.
 Never stress availability, invoke a live target, use a real credential, publish an
 artifact, or continue past the minimum observed effect.
+If you find a real secret in the target, never return its value, any part of it, or
+any reversible encoding of it. Return its type, repository-relative location, and a
+value hash: `sha256:` plus the first 12 hex digits of the SHA-256 of the exact value,
+omitted when the value is shorter than 16 characters.
 
 A deployment, browser, provider, broker, OS, proxy, package, secret, or identity fact
 outside source is not proof either way. If one such fact is decisive, return a

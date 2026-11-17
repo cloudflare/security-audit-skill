@@ -106,9 +106,9 @@ Read `report-schema.json` immediately before writing. It uses `additionalPropert
 - A `needs_validation` record uses `claimed_root_cause`, `trace`, `evidence`, `blockers`, and at least one nonempty `validation_plan.local` or `validation_plan.deployment` field. Include both only when both contexts can resolve distinct facts. It must not use severity, execution, remediation, reason, or confirmed root cause.
 - A `rejected` record uses `claimed_root_cause`, `trace`, `evidence`, and `reason`. It must not use severity, execution, remediation, blockers, validation plan, or confirmed root cause.
 
-Every record has a stable fingerprint, title, description, and repository-relative source paths. A multi-step trace begins with `entrypoint`, ends with `sink`, and uses `propagation` only between them. One-entry traces use `entrypoint` or `sink`. Overall severity cannot exceed demonstrated impact.
+Every record has a stable fingerprint, title, description, and repository-relative source paths. A real secret found in the target appears in a record, or in any report derived from it, only as its type, location, and short value hash, as `SKILL.md` requires; never as its value. A multi-step trace begins with `entrypoint`, ends with `sink`, and uses `propagation` only between them. One-entry traces use `entrypoint` or `sink`. Overall severity cannot exceed demonstrated impact.
 
-Run:
+Run both validators as Validator execution in `SKILL.md` requires (inside the target-code sandbox, not with the host `node`):
 
 ```sh
 node <skill-dir>/validate-findings.cjs <output-dir>/findings.json

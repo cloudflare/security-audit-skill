@@ -41,6 +41,8 @@ The agent, outside the target-controlled process, may make a disposable source c
 
 Use dummy principals, fixtures, and secrets. Do not probe deployed endpoints, external services, shared infrastructure, production identities, other users' data, or live control planes. Do not test availability against a live or shared process, publish artifacts, alter releases, spend paid API quota, or continue beyond the minimum local effect needed to establish a defect. If the decisive fact is outside source or the sandboxed fixture, report it as needing validation.
 
+Treat a real secret found in the target (a credential, key, token, password, connection string, or session value in source, history, fixtures, configuration, or build output) as sensitive data, not as evidence to copy. Never write its value, any part of it, or any reversible encoding of it into `findings.json`, the coverage ledger, `REPORT.md`, `FINDINGS-DETAIL.md`, `NEEDS-VALIDATION.md`, scratch or artifact files, or any agent prompt or hand-off. Record only the secret type, its repository-relative location (path and line, or commit and path for history), and a short value hash (not the record `fingerprint`): `sha256:` followed by the first 12 hex digits of the SHA-256 of the exact value. Omit the hash for a value shorter than 16 characters, because a short hash of a short value can be brute-forced. A hunter or verifier result that contains a secret value is malformed: discard it without copying the value, and re-run with a fresh agent when the budget permits. Do not check whether the secret is live; report its validity and rotation as an owner-observed fact.
+
 ## Full audit setup
 
 In full audit mode, resolve these values before reconnaissance:
@@ -84,6 +86,10 @@ Before execution, the parent opens and retains trusted, non-inheritable director
 For a reproduced check, record the command, exact test input, sandbox limits, and only the allowlisted environment variable names plus safe non-secret values needed to reproduce it. Never capture or copy the ambient environment, inherited variables, credential values, authentication state, or unrelated host paths. Launch from an empty environment rather than trying to redact one after execution.
 
 Before delegation, the parent writes `run-metadata.json` with at least `run_id`, `repo`, `target`, `source_ref`, `profile`, `scope_paths`, `budget` (null if unset), `execution_policy: "sandboxed-source-and-local-only"`, selected companion files, prior-run paths, shared-file owners, and `run_status: "in_progress"`. Update metadata only when those facts change; candidate state belongs in the coverage ledger and `findings.json`.
+
+### Validator execution
+
+`findings.json` and `coverage-ledger.json` carry text derived from the target, so the validators read untrusted input. Run `validate-findings.cjs` and `validate-coverage-ledger.cjs` inside the same OS-enforced sandbox used for target code, not with the host `node` in the parent's own environment: no network, an empty environment, the skill directory and the input file mounted read-only, no writable path, and the same low resource and wall-clock limits. Accept a pass only from the exit status and output observed from that sandbox. If the sandbox is unavailable, still run the validators, and state in `REPORT.md` and `run-metadata.json` that they ran outside it.
 
 ## Full audit planning
 
@@ -172,7 +178,7 @@ In full audit mode, follow all six phases in order:
 1. **Reconnaissance** — map the source, trust boundaries, local build paths, companion selections, prior evidence, and initial deterministic coverage ledger with [RECONNAISSANCE.md](RECONNAISSANCE.md).
 2. **Coverage-led hunting waves** — assign isolated hunters from the ledger and collect structured candidate results with [HUNTING.md](HUNTING.md), [ATTACK-CLASSES.md](ATTACK-CLASSES.md), and the selected domain companions.
 3. **Candidate validation** — consolidate fingerprints and give every candidate to a fresh source verifier as defined in [VALIDATION-AND-REPORTING.md](VALIDATION-AND-REPORTING.md).
-4. **Structured output** — write all final `confirmed`, `needs_validation`, and `rejected` records to `findings.json`; validate it with `report-schema.json` and `validate-findings.cjs`, and validate the coverage claim with `validate-coverage-ledger.cjs`.
+4. **Structured output** — write all final `confirmed`, `needs_validation`, and `rejected` records to `findings.json`; validate it with `report-schema.json` and `validate-findings.cjs`, and validate the coverage claim with `validate-coverage-ledger.cjs`, running both under Validator execution.
 5. **Independent record verification** — use fresh agents to verify final source claims and reconcile corrections or state changes.
 6. **Target-neutral report** — derive `REPORT.md`, `FINDINGS-DETAIL.md`, and `NEEDS-VALIDATION.md` from the final records, with no live-probe instructions.
 
