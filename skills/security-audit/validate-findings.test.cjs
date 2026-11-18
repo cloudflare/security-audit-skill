@@ -650,3 +650,30 @@ test("keeps shared helpers aligned with the coverage-ledger validator", () => {
     );
   }
 });
+
+test("keeps the artifact promotion procedure identical across prompts", () => {
+  const read = (name) => fs.readFileSync(path.join(__dirname, name), "utf8");
+  const promotionBlocks = (name) => [
+    ...read(name).matchAll(/^```text\n(Artifact promotion procedure \(trusted parent-side code only\):\n[\s\S]*?)^```$/gm),
+  ].map((match) => match[1]);
+
+  const hunting = promotionBlocks("HUNTING.md");
+  const verifier = promotionBlocks("VALIDATION-AND-REPORTING.md");
+  assert.equal(hunting.length, 1, "HUNTING.md promotion blocks");
+  assert.equal(verifier.length, 1, "VALIDATION-AND-REPORTING.md promotion blocks");
+  assert.equal(verifier[0], hunting[0], "hunter and verifier blocks must be byte-identical");
+
+  // SKILL.md states the same procedure as wrapped Markdown prose, so compare
+  // it to the prompt block after its two-line header with whitespace and
+  // inline-code markers normalized.
+  const normalize = (text) => text.replace(/`/g, "").replace(/\s+/g, " ").trim();
+  const skill = read("SKILL.md");
+  const start = skill.indexOf("Before execution, the parent opens and retains");
+  const end = skill.indexOf("\n\n[HUNTING.md](HUNTING.md)", start);
+  assert.ok(start !== -1 && end !== -1, "SKILL.md promotion procedure not found");
+  assert.equal(
+    normalize(skill.slice(start, end)),
+    normalize(hunting[0].split("\n").slice(3).join("\n")),
+    "SKILL.md promotion procedure diverges from the prompt block",
+  );
+});
