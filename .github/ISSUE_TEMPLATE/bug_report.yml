@@ -1,0 +1,27 @@
+name: Bug report
+description: The skill or a validator behaves differently from what its documentation says.
+body:
+  - type: textarea
+    id: behavior
+    attributes:
+      label: What happened
+      description: Include the file and section, or the validator command and its output.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+      description: Quote the documentation or schema rule the behavior contradicts, if there is one.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce
+      description: Minimal steps or a small findings.json or coverage-ledger.json fixture.
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Agent and model, operating system, and Node.js version.

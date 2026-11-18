@@ -1,0 +1,22 @@
+name: Proposal
+description: A new attack class, companion file, or change to the workflow or schema.
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What the skill misses or gets wrong today, with an example target or run if you have one.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: The change, which files it touches, and how it fits the existing section schema and evidence bar.
+    validations:
+      required: true
+  - type: textarea
+    id: related
+    attributes:
+      label: Related issues and pull requests
+      description: Open issues or pull requests that overlap with this one.

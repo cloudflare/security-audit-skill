@@ -97,6 +97,10 @@ The skill activates automatically when the request matches its trigger (security
 - **Defense-in-depth gaps are not vulnerabilities.** If Layer A prevents the attack, the absence of Layer B is a hardening note.
 - **Multiple runs improve coverage.** In our test runs, a single run found roughly half of the vulnerabilities that repeated runs found in total.
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Report vulnerabilities as described in [SECURITY.md](SECURITY.md), not in public issues.
+
 ## Contact
 
 Questions, feedback, or comparing notes on AI-driven security tooling: security-ai-research@cloudflare.com
