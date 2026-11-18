@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://www.cloudflare.com/.well-known/security.txt
+    about: Do not file security vulnerabilities as public issues.
