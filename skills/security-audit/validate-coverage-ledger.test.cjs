@@ -439,6 +439,37 @@ test("preserves candidate provenance when reassignment must be deferred", () => 
   assert.deepEqual(errorsFor([deferred]), []);
 });
 
+test("allows shared artifacts within an archived attempt but rejects cross-attempt reuse", () => {
+  const checks = [
+    localCheck(),
+    localCheck("hunter-1", { invariant: "The update preserves object ownership." }),
+  ];
+  const reassigned = unit({
+    attempts: [archivedAttempt({ local_checks: checks })],
+    wave: 2,
+    status: "in_progress",
+    agent_id: "hunter-2",
+  });
+  assert.deepEqual(errorsFor([reassigned]), []);
+
+  const currentReuse = unit({
+    ...reassigned,
+    local_checks: [localCheck()],
+  });
+  assert(errorsFor([currentReuse]).some((error) => error.includes("artifact from an archived attempt cannot be reused")));
+
+  const archivedReuse = unit({
+    attempts: [
+      ...reassigned.attempts,
+      archivedAttempt({ wave: 2, agent_id: "hunter-2", local_checks: [localCheck()] }),
+    ],
+    wave: 3,
+    status: "in_progress",
+    agent_id: "hunter-3",
+  });
+  assert(errorsFor([archivedReuse]).some((error) => error.includes("artifact from an earlier attempt cannot be reused")));
+});
+
 test("rejects reassignment owner reuse and evidence mixing", () => {
   const reusedOwner = unit({
     attempts: [archivedAttempt()],
@@ -488,6 +519,25 @@ test("rejects reassignment owner reuse and evidence mixing", () => {
     agent_id: "hunter-3",
   });
   assert(errorsFor([unordered]).some((error) => error.includes("strictly increasing")));
+});
+
+test("allows a covered archived attempt to share an artifact across reviewed paths", () => {
+  const check1 = localCheck("hunter-1", { reviewed_paths: ["src/router.ts"] });
+  const check2 = localCheck("hunter-1", { reviewed_paths: ["src/authz.ts"] });
+  const sharedAttempt = archivedAttempt({
+    status: "covered",
+    reviewed_paths: ["src/router.ts", "src/authz.ts"],
+    local_checks: [check1, check2],
+    unresolved: [],
+  });
+
+  const validReassigned = unit({
+    attempts: [sharedAttempt],
+    wave: 2,
+    status: "in_progress",
+    agent_id: "hunter-2",
+  });
+  assert.deepEqual(errorsFor([validReassigned]), []);
 });
 
 test("rejects unsafe paths and malformed fingerprints", () => {
