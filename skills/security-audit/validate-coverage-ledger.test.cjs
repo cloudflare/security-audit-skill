@@ -521,6 +521,25 @@ test("rejects reassignment owner reuse and evidence mixing", () => {
   assert(errorsFor([unordered]).some((error) => error.includes("strictly increasing")));
 });
 
+test("allows a covered archived attempt to share an artifact across reviewed paths", () => {
+  const check1 = localCheck("hunter-1", { reviewed_paths: ["src/router.ts"] });
+  const check2 = localCheck("hunter-1", { reviewed_paths: ["src/authz.ts"] });
+  const sharedAttempt = archivedAttempt({
+    status: "covered",
+    reviewed_paths: ["src/router.ts", "src/authz.ts"],
+    local_checks: [check1, check2],
+    unresolved: [],
+  });
+
+  const validReassigned = unit({
+    attempts: [sharedAttempt],
+    wave: 2,
+    status: "in_progress",
+    agent_id: "hunter-2",
+  });
+  assert.deepEqual(errorsFor([validReassigned]), []);
+});
+
 test("rejects unsafe paths and malformed fingerprints", () => {
   for (const value of [
     "/etc/passwd",
