@@ -154,6 +154,70 @@ result: safeJoin rejects traversal after normalization.
 ${u1 === "candidate" ? candidate : ""}`;
 }
 
+const LEAD_FINGERPRINT = "src-reset-token-unbound";
+
+const LEAD_CANDIDATE = `
+[candidate]
+proposed_verdict: needs_validation
+fingerprint: ${LEAD_FINGERPRINT}
+title: Reset token may reset another user's password
+description: The reset endpoint takes the user id from the request body.
+claimed_root_cause: verifyToken does not compare the token subject with the submitted user id.
+blockers: The token store is generated at deploy time and absent from the checkout.
+validation_plan.local: Generate the token store fixture and submit user 1's token with user id 2.
+triage.potential_impact.score: high
+triage.potential_impact.reason: Any account could reset another user's password and take over that account.
+triage.plausibility.score: medium
+triage.plausibility.reason: verifyToken visibly checks only expiry; the generated store might still compare subjects.
+[trace]
+file: src/reset.ts:12
+scope: POST /reset
+description: Accepts the token and user id from the body.
+[trace]
+file: src/reset.ts:20
+scope: setPassword
+description: Writes the password for the body user id.
+[evidence]
+file: src/tokens.ts:30
+description: No subject comparison.
+`;
+
+function leadHunterResult(candidate = LEAD_CANDIDATE) {
+  return `[unit]
+coverage_id: U1
+disposition: candidate
+candidate_fingerprints: ${LEAD_FINGERPRINT}
+[check]
+invariant: A reset token is bound to the user it was issued for.
+method: source
+reviewed_paths: src/reset.ts
+result: verifyToken checks expiry only.
+
+[unit]
+coverage_id: U2
+disposition: covered
+[check]
+invariant: Upload paths stay inside the upload root.
+method: source
+reviewed_paths: src/upload.ts
+result: safeJoin rejects traversal after normalization.
+${candidate}`;
+}
+
+/** Runs a needs_validation lead through hunting and Phase 3 and writes findings.json. */
+function decidedLeadRun() {
+  const box = seededRun();
+  ok(["agent", "start", "--run", box.run, "--agent", "hunter-1", "--role", "hunter", "--units", "U1,U2"]);
+  writeResult(box, "hunter-1", leadHunterResult());
+  ok(["ingest", "--run", box.run, "--agent", "hunter-1"]);
+  ok(["agent", "start", "--run", box.run, "--agent", "verifier-1", "--role", "verifier", "--fingerprint", LEAD_FINGERPRINT]);
+  const file = path.join(box.run, "agents", "verifier-1", "result.txt");
+  fs.writeFileSync(file, fs.readFileSync(file, "utf8").replace(/^decision:$/m, "decision: needs_validation"));
+  ok(["ingest", "--run", box.run, "--agent", "verifier-1"]);
+  ok(["findings", "write", "--run", box.run]);
+  return box;
+}
+
 function seededRun(extraMetadata = "") {
   const box = sandbox();
   ok(["init", "--run", box.run, "--file", box.file("meta.txt", metadataText(box, extraMetadata))]);
@@ -598,6 +662,116 @@ test("the quick profile treats the candidate verifier's decision as final", () =
   fails(["agent", "start", "--run", box.run, "--agent", "rv-1", "--role", "record-verifier", "--fingerprint", "src-users-missing-owner-check"], /quick profile merges Phase 5/);
   ok(["findings", "write", "--run", box.run]);
   ok(["finish", "--run", box.run, "--status", "complete"]);
+});
+
+// ---------------------------------------------------------------------------
+// Validation priority (triage) for needs_validation leads
+// ---------------------------------------------------------------------------
+
+test("the tool derives a lead's validation priority and replaces any authored value", () => {
+  const box = seededRun();
+  ok(["agent", "start", "--run", box.run, "--agent", "hunter-1", "--role", "hunter", "--units", "U1,U2"]);
+  const template = fs.readFileSync(path.join(box.run, "agents", "hunter-1", "result.txt"), "utf8");
+  assert.match(template, /^triage\.potential_impact\.score:$/m);
+  assert.doesNotMatch(template, /^triage\.priority/m, "the derived priority is never offered for authoring");
+  writeResult(box, "hunter-1", leadHunterResult(LEAD_CANDIDATE.replace("[trace]", "triage.priority: P4\n[trace]")));
+  ok(["ingest", "--run", box.run, "--agent", "hunter-1"]);
+  const [proposal] = readJson(path.join(box.run, "state", "results", "hunter-1.json")).candidates;
+  assert.equal(proposal.triage.priority, "P2");
+  assert.deepEqual(Object.keys(proposal.triage), ["potential_impact", "plausibility", "priority"]);
+});
+
+test("a missing triage score is reported on its own line without a derived-priority error", () => {
+  const box = seededRun();
+  ok(["agent", "start", "--run", box.run, "--agent", "hunter-1", "--role", "hunter", "--units", "U1,U2"]);
+  const text = leadHunterResult(LEAD_CANDIDATE.replace("triage.plausibility.score: medium\n", ""));
+  writeResult(box, "hunter-1", text);
+  const output = fails(["check", "--run", box.run, "--agent", "hunter-1"]);
+  const reasonLine = text.split("\n").findIndex((line) => line.startsWith("triage.plausibility.reason")) + 1;
+  assert.match(output, new RegExp(`result\\.txt:${reasonLine}: \\[candidate\\] ${LEAD_FINGERPRINT} triage\\.plausibility: missing required field "score"`));
+  assert.doesNotMatch(output, /"priority"/);
+});
+
+test("decided leads keep their priority in findings.json, status, and progress.html", () => {
+  const box = decidedLeadRun();
+  const [record] = validateRunFindings(box);
+  assert.equal(record.verdict, "needs_validation");
+  assert.equal(record.triage.priority, "P2");
+  assert.match(ok(["status", "--run", box.run]), /Validation priorities of 1 needs_validation lead\(s\): P2 1/);
+  assert.match(ok(["show", "finding", LEAD_FINGERPRINT, "--run", box.run]), /# validation priority P2 \(impact if confirmed: high; plausibility: medium\) — not a severity/);
+  const html = fs.readFileSync(path.join(box.run, "progress.html"), "utf8");
+  assert.match(html, /data-status="needs_validation P2"/);
+  assert.match(html, /class="pill pri-P2"/);
+  assert.match(html, /if confirmed: high/);
+  assert.match(html, /data-value="P2">P2 1</);
+});
+
+function validateRunFindings(box) {
+  validateRun(box);
+  return readJson(path.join(box.run, "findings.json"));
+}
+
+/** Rewrites a run's files as a run from before triage existed would have left them. */
+function stripTriage(box) {
+  const statePath = path.join(box.run, "state", "audit-state.json");
+  const saved = readJson(statePath);
+  for (const candidate of saved.candidates) if (candidate.record) delete candidate.record.triage;
+  fs.writeFileSync(statePath, JSON.stringify(saved, null, 2));
+  const findingsPath = path.join(box.run, "findings.json");
+  const findings = readJson(findingsPath);
+  for (const record of findings) delete record.triage;
+  fs.writeFileSync(findingsPath, JSON.stringify(findings, null, 2));
+}
+
+test("a triager backfills validation priorities for a run that predates them", () => {
+  const box = decidedLeadRun();
+  stripTriage(box);
+  fails(["findings", "write", "--run", box.run], /have no validation priority yet/);
+  assert.match(ok(["status", "--run", box.run]), /untriaged 1/);
+  fails(["agent", "start", "--run", box.run, "--agent", "triager-0", "--role", "triager", "--fingerprint", "src-users-missing-owner-check"], /unknown candidate/);
+  ok(["agent", "start", "--run", box.run, "--agent", "triager-1", "--role", "triager", "--untriaged", "5"]);
+  fails(["agent", "start", "--run", box.run, "--agent", "triager-2", "--role", "triager", "--untriaged", "5"], /no untriaged needs_validation record is waiting/);
+  assert.match(ok(["brief", "--run", box.run, "--agent", "triager-1"]), new RegExp(`\\[lead ${LEAD_FINGERPRINT}\\][\\s\\S]*claimed_root_cause: verifyToken`));
+  const file = path.join(box.run, "agents", "triager-1", "result.txt");
+  const template = fs.readFileSync(file, "utf8");
+  assert.match(template, new RegExp(`^fingerprint: ${LEAD_FINGERPRINT}$`, "m"));
+  fs.writeFileSync(file, template
+    .replace(/^triage\.potential_impact\.score:$/m, "triage.potential_impact.score: critical")
+    .replace(/^triage\.potential_impact\.reason:$/m, "triage.potential_impact.reason: Unauthenticated takeover of any account through the public reset route.")
+    .replace(/^triage\.plausibility\.score:$/m, "triage.plausibility.score: high")
+    .replace(/^triage\.plausibility\.reason:$/m, "triage.plausibility.reason: Only the generated store's comparison is unseen; every visible step uses the body user id."));
+  const output = ok(["ingest", "--run", box.run, "--agent", "triager-1"]);
+  assert.match(output, new RegExp(`${LEAD_FINGERPRINT}: P1`));
+  const [record] = validateRunFindings(box);
+  assert.equal(record.triage.priority, "P1");
+  assert.equal(record.claimed_root_cause, "verifyToken does not compare the token subject with the submitted user id.", "triage never changes the lead itself");
+});
+
+test("an untriaged lead from an older run still carries, and its verifier adds the priority", () => {
+  const prior = decidedLeadRun();
+  stripTriage(prior);
+  const box = sandbox();
+  ok(["init", "--run", box.run, "--file", box.file("meta.txt", metadataText(box, `prior_runs: ${prior.run}\n`))]);
+  ok(["units", "add", "--run", box.run, "--file", box.file("units.txt", UNITS.replace("starting_paths: src/router.ts", "starting_paths: src/router.ts\nprior_status: prior_needs_validation"))]);
+  ok(["carry", "--run", box.run, "--prior", path.join(prior.run, "findings.json"), "--fingerprint", LEAD_FINGERPRINT, "--unit", "U1"]);
+  ok(["agent", "start", "--run", box.run, "--agent", "verifier-2", "--role", "verifier", "--fingerprint", LEAD_FINGERPRINT]);
+  const file = path.join(box.run, "agents", "verifier-2", "result.txt");
+  const filled = fs.readFileSync(file, "utf8")
+    .replace(/^decision:$/m, "decision: needs_validation")
+    .replace(/^invariant:$/m, "invariant: A reset token is bound to its user.")
+    .replace(/^method:$/m, "method: source")
+    .replace(/^reviewed_paths:$/m, "reviewed_paths: src/reset.ts")
+    .replace(/^result:$/m, "result: Current source still checks expiry only.");
+  fs.writeFileSync(file, filled);
+  fails(["check", "--run", box.run, "--agent", "verifier-2"], /\[record\]: missing required field "triage"/);
+  fs.writeFileSync(file, filled
+    .replace(/^triage\.potential_impact\.score:$/m, "triage.potential_impact.score: high")
+    .replace(/^triage\.potential_impact\.reason:$/m, "triage.potential_impact.reason: Another user's password could be reset.")
+    .replace(/^triage\.plausibility\.score:$/m, "triage.plausibility.score: low")
+    .replace(/^triage\.plausibility\.reason:$/m, "triage.plausibility.reason: tokens.ts appears to sign the subject into the token."));
+  ok(["ingest", "--run", box.run, "--agent", "verifier-2"]);
+  ok(["findings", "write", "--run", box.run]);
+  assert.equal(validateRunFindings(box)[0].triage.priority, "P3");
 });
 
 // ---------------------------------------------------------------------------

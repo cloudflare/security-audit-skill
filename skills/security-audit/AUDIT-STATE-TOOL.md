@@ -59,7 +59,7 @@ key:                      empty means "not provided"
 - If `<<<` ... `>>>` would be ambiguous because the text contains a line `>>>`, open with `<<<END` and close with a line `END`.
 - A Markdown code fence around the whole file is ignored.
 
-`node <skill-dir>/audit-state.cjs template <kind>` prints a commented template for `metadata`, `units`, `hunter`, `critic`, `verifier`, or `record-verifier`. Record templates are derived from `report-schema.json` at run time, including its field and verdict descriptions, so they cannot drift from the schema.
+`node <skill-dir>/audit-state.cjs template <kind>` prints a commented template for `metadata`, `units`, `hunter`, `critic`, `verifier`, `record-verifier`, or `triager`. Record templates are derived from `report-schema.json` at run time, including its field and verdict descriptions, so they cannot drift from the schema.
 
 ## Parent workflow
 
@@ -119,6 +119,19 @@ Candidates are consolidated by fingerprint automatically. Consolidate different 
 
 A Phase 5 `replace` decision applies at once only when it changes no material field. The tool flags a stronger verdict and changes to the root cause, the trace beyond line numbers, execution input, observed result, impact, or severity. A flagged replacement waits for a fresh `record-verifier`, which reviews the pending replacement. If the flagged change is only wording or a line correction that changes no meaning or evidence, apply it with `record apply --fingerprint <fp> --non-material --reason "<why>"`. If no independent verifier is available, `record remove --fingerprint <fp> --reason "<exact reason>"` removes it from `findings.json` and the run must end incomplete. A record with a genuinely different root cause needs `--new-root-cause` on `ingest`; Phase 3 renames the candidate, and Phase 5 registers a new candidate for independent validation. In the `quick` profile the Phase 3 decision is final and the tool refuses record verifiers.
 
+### Validation priority
+
+Every `needs_validation` record carries `triage`, the validation priority defined in `SKILL.md`. Hunters and verifiers write its two scores and reasons; the tool computes `triage.priority` (P1–P4), replacing any written value, and `status`, `show finding`, and `progress.html` show it. A change to triage alone never makes a Phase 5 replacement material.
+
+To add priorities to a run from before triage existed, or to re-triage leads, start triager agents with a few leads each. A triager reads source only and writes one `[lead]` per assigned record:
+
+```sh
+node <skill-dir>/audit-state.cjs agent start --run <output-dir> --agent triager-1 --role triager --untriaged 5
+node <skill-dir>/audit-state.cjs ingest --run <output-dir> --agent triager-1
+```
+
+`--fingerprint <fp>,<fp>` assigns specific decided leads instead. Until every lead of such a run has a priority, `findings.json` keeps its last content, and `findings write` and `finish --status complete` refuse. `carry` still accepts an untriaged lead from a prior run; its Phase 3 verifier adds the triage.
+
 ### Phase 6 and status
 
 ```sh
@@ -142,4 +155,4 @@ An agent without a file-writing tool replies with the record text itself; the pa
 
 ## Progress report
 
-`progress.html` is a self-contained page, regenerated after every state change and with `report`. It shows the phase, coverage by status, candidates and their validation history, findings with full source traces and reproductions, agents and budget, open proposals and unresolved facts, hardening notes, `architecture.md`, and the activity log. Open it in a browser; while the run is in progress it refreshes itself every 15 seconds. All content is escaped, invisible and direction-changing characters are shown as `U+XXXX`, and a Content-Security-Policy pins the page's only script and style by hash, so text copied from the target cannot execute.
+`progress.html` is a self-contained page, regenerated after every state change and with `report`. It shows the phase, coverage by status, candidates and their validation history, findings with full source traces and reproductions (needs-validation leads ordered by validation priority, with P1–P4 filters and their impact if confirmed, never styled as a severity), agents and budget, open proposals and unresolved facts, hardening notes, `architecture.md`, and the activity log. Open it in a browser; while the run is in progress it refreshes itself every 15 seconds. All content is escaped, invisible and direction-changing characters are shown as `U+XXXX`, and a Content-Security-Policy pins the page's only script and style by hash, so text copied from the target cannot execute.

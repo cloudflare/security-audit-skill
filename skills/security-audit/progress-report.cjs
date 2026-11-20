@@ -59,7 +59,21 @@ function label(value) {
 
 function pill(kind, value, extra = "") {
   if (value === null || value === undefined || value === "") return "";
-  return `<span class="pill ${kind}-${esc(String(value).replace(/[^a-z_-]/gi, ""))}${extra ? ` ${extra}` : ""}">${esc(label(value))}</span>`;
+  return `<span class="pill ${kind}-${esc(String(value).replace(/[^a-z0-9_-]/gi, ""))}${extra ? ` ${extra}` : ""}">${esc(label(value))}</span>`;
+}
+
+const PRIORITIES = ["P1", "P2", "P3", "P4"];
+
+function leadPriority(record) {
+  return record && record.verdict === "needs_validation" && record.triage && PRIORITIES.includes(record.triage.priority) ? record.triage.priority : null;
+}
+
+/** Priority pill plus a dashed "if confirmed" impact pill; never styled as a severity. */
+function priorityPills(record) {
+  const priority = leadPriority(record);
+  if (!priority) return record && record.verdict === "needs_validation" ? "<span class=\"pill ghost\">no priority</span>" : "";
+  const impact = record.triage.potential_impact && record.triage.potential_impact.score;
+  return `${pill("pri", priority)}${impact ? ` <span class="pill potential sev-${esc(String(impact).replace(/[^a-z]/gi, ""))}" title="impact if the claimed root cause holds — not a severity">if confirmed: ${esc(impact)}</span>` : ""}`;
 }
 
 function time(iso) {
@@ -217,6 +231,14 @@ function renderRecord(record) {
   if (record.validation_plan) {
     parts.push(`<h4>Validation plan</h4>${dl([["Local", record.validation_plan.local ? txt(record.validation_plan.local) : null], ["Owner-observed deployment", record.validation_plan.deployment ? txt(record.validation_plan.deployment) : null]])}`);
   }
+  if (record.triage) {
+    const triage = record.triage;
+    parts.push("<h4>Validation priority <span class=\"muted plainh\">— orders validation work; not a severity</span></h4>" + dl([
+      ["Priority", pill("pri", triage.priority)],
+      ["Impact if confirmed", triage.potential_impact ? `${pill("sev", triage.potential_impact.score, "potential")} ${txt(triage.potential_impact.reason)}` : null],
+      ["Plausibility", triage.plausibility ? `${pill("conf", triage.plausibility.score)} ${txt(triage.plausibility.reason)}` : null],
+    ]));
+  }
   if (record.execution) {
     const execution = record.execution;
     parts.push("<h4>Bounded local reproduction</h4>" + dl([
@@ -286,6 +308,7 @@ function overview(data) {
   const candidateCounts = countBy(candidates, "status");
   const records = findings || [];
   const verdictCounts = countBy(records, "verdict");
+  const priorityCounts = countBy(records.filter(leadPriority), leadPriority);
   const severityCounts = countBy(records.filter((record) => record.verdict === "confirmed"), (record) => record.severity && record.severity.overall_severity);
   const agents = (state && state.agents) || [];
   const running = agents.filter((agent) => agent.status === "running").length;
@@ -298,7 +321,7 @@ function overview(data) {
     tile("Coverage units", `${closed}<small>/${units.length} closed</small>`, `${unitCounts.in_progress || 0} in progress · ${unitCounts.planned || 0} planned`),
     tile("Candidates", `${candidates.length}`, `${(candidateCounts.proposed || 0) + (candidateCounts.validating || 0)} awaiting validation`),
     tile("Confirmed", `${verdictCounts.confirmed || 0}`, severityDetail || (findings ? "none confirmed" : "findings.json not written"), "accent-confirmed"),
-    tile("Needs validation", `${verdictCounts.needs_validation || 0}`, `${verdictCounts.rejected || 0} rejected`),
+    tile("Needs validation", `${verdictCounts.needs_validation || 0}`, [PRIORITIES.map((priority) => (priorityCounts[priority] ? `${pill("pri", priority)} ${priorityCounts[priority]}` : "")).filter(Boolean).join(" "), `${verdictCounts.rejected || 0} rejected`].filter(Boolean).join(" · ")),
     tile("Agents", `${agents.length}${budget !== null ? `<small>/${budget}</small>` : ""}`, `${running} running${budget !== null ? ` · ${Math.max(0, budget - agents.length)} left` : ""}`),
     tile("Validators", validatorLine),
   ].join("");
@@ -422,7 +445,7 @@ function candidatesSection(data) {
     const linkedUnits = linked(candidate.fingerprint);
     const search = [candidate.fingerprint, candidate.title, candidate.verdict, ...candidate.proposals.map((proposal) => proposal.agent_id)].filter(Boolean).join(" ").toLowerCase();
     return `<details class="row" id="c-${slug(candidate.fingerprint)}" data-status="${esc(candidate.status)}" data-search="${attr(search)}">
-      <summary class="grid cand-grid">${pill("cs", candidate.status)}<span class="main"><b>${txt(candidate.title || candidate.fingerprint)}</b><span class="sub">${code(candidate.fingerprint)}</span></span><span>${pill("verdict", candidate.verdict || (candidate.proposals[0] || {}).proposed_verdict, candidate.verdict ? "" : "ghost")}</span><span class="meta">${linkedUnits.map((unit) => esc(alias(unit))).join(" ") || "—"}</span><span class="meta">${candidate.proposals.map((proposal) => esc(proposal.agent_id)).join(", ")}</span></summary>
+      <summary class="grid cand-grid">${pill("cs", candidate.status)}<span class="main"><b>${txt(candidate.title || candidate.fingerprint)}</b><span class="sub">${code(candidate.fingerprint)}</span></span><span>${pill("verdict", candidate.verdict || (candidate.proposals[0] || {}).proposed_verdict, candidate.verdict ? "" : "ghost")}${leadPriority(latest) ? ` ${pill("pri", leadPriority(latest))}` : ""}</span><span class="meta">${linkedUnits.map((unit) => esc(alias(unit))).join(" ") || "—"}</span><span class="meta">${candidate.proposals.map((proposal) => esc(proposal.agent_id)).join(", ")}</span></summary>
       <div class="body">
         ${candidate.duplicate_of ? `<p>Duplicate of ${code(candidate.duplicate_of)}${candidate.duplicate_reason ? ` — ${txt(candidate.duplicate_reason)}` : ""}</p>` : ""}
         ${candidate.removed_reason ? `<p class="bad">Removed: ${txt(candidate.removed_reason)}</p>` : ""}
@@ -437,24 +460,36 @@ function candidatesSection(data) {
 
 function findingsSection(data) {
   if (!data.findings) return `<section id="findings" class="card"><h2>Findings</h2><p class="muted">findings.json is written in Phase 4, after independent candidate validation.</p></section>`;
+  // Confirmed by severity, then needs_validation leads by validation priority and impact if confirmed, then rejected.
+  const rank = (record) => {
+    if (record.verdict === "confirmed") return SEVERITIES.indexOf(record.severity ? record.severity.overall_severity : "informational");
+    if (record.verdict === "needs_validation") {
+      const priority = leadPriority(record);
+      const impact = record.triage && record.triage.potential_impact ? SEVERITIES.indexOf(record.triage.potential_impact.score) : SEVERITIES.length;
+      return (priority ? PRIORITIES.indexOf(priority) : PRIORITIES.length) * 10 + impact;
+    }
+    return 0;
+  };
   const records = data.findings.slice().sort((left, right) => {
     const verdictOrder = VERDICTS.indexOf(left.verdict) - VERDICTS.indexOf(right.verdict);
     if (verdictOrder) return verdictOrder;
-    const severity = (record) => SEVERITIES.indexOf(record.severity ? record.severity.overall_severity : "informational");
-    return severity(left) - severity(right) || String(left.fingerprint).localeCompare(String(right.fingerprint));
+    return rank(left) - rank(right) || String(left.fingerprint).localeCompare(String(right.fingerprint));
   });
   const candidates = new Map(((data.state && data.state.candidates) || []).map((candidate) => [candidate.fingerprint, candidate]));
-  const counts = countBy(records, "verdict");
+  const counts = { ...countBy(records, "verdict"), ...countBy(records.filter(leadPriority), leadPriority) };
   const rows = records.map((record) => {
     const candidate = candidates.get(record.fingerprint);
     const review = candidate ? pill("cs", candidate.status) : "";
     const headline = record.verdict === "confirmed" ? record.execution && record.execution.observed_result : record.verdict === "needs_validation" ? (record.blockers || [])[0] : record.reason;
-    const search = [record.fingerprint, record.title, record.verdict, record.severity && record.severity.overall_severity].filter(Boolean).join(" ").toLowerCase();
-    return `<details class="row" id="f-${slug(record.fingerprint)}" data-status="${esc(record.verdict)}" data-search="${attr(search)}">
-      <summary class="grid find-grid">${record.verdict === "confirmed" ? pill("sev", record.severity && record.severity.overall_severity) : pill("verdict", record.verdict)}<span class="main"><b>${txt(record.title)}</b><span class="sub">${txt(headline || "")}</span></span><span class="meta">${code(record.fingerprint)}</span><span class="meta">${review}</span></summary>
+    const priority = leadPriority(record);
+    const search = [record.fingerprint, record.title, record.verdict, record.severity && record.severity.overall_severity, priority].filter(Boolean).join(" ").toLowerCase();
+    const lead = record.verdict === "confirmed" ? pill("sev", record.severity && record.severity.overall_severity) : record.verdict === "needs_validation" ? priorityPills(record) : pill("verdict", record.verdict);
+    return `<details class="row" id="f-${slug(record.fingerprint)}" data-status="${esc([record.verdict, priority].filter(Boolean).join(" "))}" data-search="${attr(search)}">
+      <summary class="grid find-grid"><span class="lead">${lead}</span><span class="main"><b>${txt(record.title)}</b><span class="sub">${txt(headline || "")}</span></span><span class="meta">${code(record.fingerprint)}</span><span class="meta">${review}</span></summary>
       <div class="body record">${renderRecord(record)}</div></details>`;
   }).join("");
-  return `<section id="findings" class="card"><h2>Findings <span class="count">${records.length}</span></h2>${filterBar("findings", VERDICTS, counts)}<div class="rows" data-filter-target="findings">${rows || "<p class=\"muted\">No records.</p>"}</div></section>`;
+  const note = counts.needs_validation ? "<p class=\"muted note\">Needs-validation leads are ordered by validation priority (P1 first) and show their impact <i>if confirmed</i>; neither is a severity.</p>" : "";
+  return `<section id="findings" class="card"><h2>Findings <span class="count">${records.length}</span></h2>${note}${filterBar("findings", [...VERDICTS, ...PRIORITIES], counts)}<div class="rows" data-filter-target="findings">${rows || "<p class=\"muted\">No records.</p>"}</div></section>`;
 }
 
 function agentsSection(data) {
@@ -570,7 +605,7 @@ details.row>summary:hover{background:var(--soft);border-radius:8px}
 .grid{display:grid;gap:10px;align-items:center}
 .unit-grid{grid-template-columns:44px 104px minmax(0,2fr) minmax(0,1.3fr) 34px 120px 80px}
 .cand-grid{grid-template-columns:132px minmax(0,2.5fr) 120px 110px minmax(0,1fr)}
-.find-grid{grid-template-columns:120px minmax(0,3fr) minmax(0,1.3fr) 120px}
+.find-grid{grid-template-columns:172px minmax(0,3fr) minmax(0,1.3fr) 120px}
 .main,.grid>span{min-width:0}.main b{display:block;overflow:hidden;text-overflow:ellipsis}.sub{display:block;color:var(--muted);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .id{font-weight:650;font-variant-numeric:tabular-nums}.meta{color:var(--muted);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .body{padding:4px 14px 14px;border-top:1px solid var(--line)}
@@ -582,8 +617,11 @@ ol.trace{margin:0;padding-left:20px}ol.trace li{margin:4px 0}.scope{font-weight:
 .pill.ghost{opacity:.6;font-style:italic}
 ${UNIT_STATUSES.map((status) => `.st-${status}{--c:var(--st-${status})}`).join("")}
 ${SEVERITIES.map((severity) => `.sev-${severity}{--c:var(--sev-${severity})}`).join("")}
-.pill[class*="st-"],.pill[class*="sev-"],.pill[class*="cs-"],.pill[class*="verdict-"],.pill[class*="ag-"],.pill[class*="dec-"],.pill[class*="kind-"],.pill[class*="run-"]{background:color-mix(in srgb,var(--c,var(--muted)) 16%,var(--card));color:var(--c,var(--ink));box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--c,var(--muted)) 35%,transparent)}
+.pill[class*="st-"],.pill[class*="sev-"],.pill[class*="cs-"],.pill[class*="verdict-"],.pill[class*="ag-"],.pill[class*="dec-"],.pill[class*="kind-"],.pill[class*="run-"],.pill[class*="pri-"]{background:color-mix(in srgb,var(--c,var(--muted)) 16%,var(--card));color:var(--c,var(--ink));box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--c,var(--muted)) 35%,transparent)}
 .cs-proposed,.ag-stop{--c:var(--st-planned)}.cs-validating,.cs-final_review,.ag-running,.run-in_progress,.kind-propagation{--c:var(--st-in_progress)}.cs-validated{--c:#13867f}.cs-replacement_pending,.ag-rejected{--c:var(--warn)}.cs-verified,.ag-done,.run-complete,.dec-verified,.kind-entrypoint{--c:var(--good)}.cs-duplicate{--c:var(--st-out_of_scope)}.cs-removed,.ag-failed,.run-incomplete,.kind-sink{--c:var(--bad)}
+.pri-P1{--c:var(--sev-high)}.pri-P2{--c:var(--sev-medium)}.pri-P3{--c:var(--st-deferred)}.pri-P4{--c:var(--sev-informational)}.dec-triaged{--c:var(--accent)}
+.pill.potential{background:transparent;box-shadow:none;border:1px dashed var(--c);line-height:16px;font-weight:500}
+.lead{display:flex;flex-wrap:wrap;gap:4px}.note{margin:-6px 0 10px;font-size:12.5px}.plainh{text-transform:none;letter-spacing:0;font-weight:400}
 .verdict-confirmed,.dec-confirmed{--c:var(--sev-high)}.verdict-needs_validation,.dec-needs_validation,.dec-replace{--c:var(--warn)}.verdict-rejected,.dec-rejected{--c:var(--st-out_of_scope)}
 svg .fill{fill:var(--c)}.bud-used{--c:var(--accent)}.bud-left{--c:var(--soft)}
 .dot{background:var(--c)}
@@ -613,7 +651,7 @@ document.querySelectorAll("[data-filter-group]").forEach(function(bar){
   var name=bar.getAttribute("data-filter-group");var target=document.querySelector('[data-filter-target="'+name+'"]');if(!target)return;
   var chips=bar.querySelectorAll(".chip");var input=bar.querySelector("input");var st=(saved.filters||{})[name]||{v:"*",q:""};
   function apply(){var q=(input.value||"").toLowerCase().trim();target.querySelectorAll("[data-status]").forEach(function(el){
-    var ok=(st.v==="*"||el.getAttribute("data-status")===st.v)&&(!q||(el.getAttribute("data-search")||"").indexOf(q)!==-1);el.hidden=!ok;});
+    var ok=(st.v==="*"||(el.getAttribute("data-status")||"").split(" ").indexOf(st.v)!==-1)&&(!q||(el.getAttribute("data-search")||"").indexOf(q)!==-1);el.hidden=!ok;});
     chips.forEach(function(c){c.classList.toggle("on",c.getAttribute("data-value")===st.v)});st.q=input.value;groups[name]=st;}
   chips.forEach(function(c){c.addEventListener("click",function(){st.v=c.getAttribute("data-value");apply();remember();})});
   input.value=st.q||"";input.addEventListener("input",function(){apply();remember();});apply();

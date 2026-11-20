@@ -721,9 +721,15 @@ function addRecordHelp(specs, recordName, allVerdicts, verdictKey) {
       for (const [verdict, text] of Object.entries(record.verdictDescriptions || {})) lines.push(`  ${verdict}: ${text}`);
     }
     const descriptions = record.descriptions || {};
-    const parent = key.includes(".") ? key.slice(0, key.indexOf(".")) : null;
-    const firstOfParent = parent && Object.keys(record.fields).find((name) => name.startsWith(`${parent}.`)) === key;
-    if (firstOfParent && descriptions[parent]) lines.unshift(`${parent} — ${descriptions[parent]}`);
+    // Print each enclosing object's description once, above its first field.
+    const segments = key.split(".");
+    const ancestorLines = [];
+    for (let depth = 1; depth < segments.length; depth++) {
+      const ancestor = segments.slice(0, depth).join(".");
+      const firstOfAncestor = Object.keys(record.fields).find((name) => name.startsWith(`${ancestor}.`)) === key;
+      if (firstOfAncestor && descriptions[ancestor]) ancestorLines.push(`${ancestor} — ${descriptions[ancestor]}`);
+    }
+    lines.unshift(...ancestorLines);
     const ownDescription = key === verdictKey ? null : descriptions[key];
     spec.help = [...lines.filter((line) => !line.startsWith("  ")), parts.join(" — ") + (ownDescription ? ` — ${ownDescription}` : ""), ...lines.filter((line) => line.startsWith("  "))];
     const groupKey = key === verdictKey ? "" : [...spec.verdicts].sort().join(",");

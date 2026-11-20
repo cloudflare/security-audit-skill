@@ -17,7 +17,7 @@ The skill runs a structured audit in six phases:
 
 No agent writes JSON by hand. Agents write their results as **record text** — `key: value` lines with no quoting or escaping — and `audit-state.cjs` compiles them into the JSON contracts, enforces the ledger state table and verdict contracts, and reports every problem by source line so the agent can fix its own file. The tool runs `validate-coverage-ledger.cjs` and `validate-findings.cjs` in-process before every write, so the run files on disk are always valid, and it regenerates `progress.html`, a human-readable view of the run, after every change.
 
-The verdicts are distinct: `confirmed` has a complete source trace and bounded observed result, `needs_validation` has an exact unresolved fact and no severity, and `rejected` records a disproved candidate.
+The verdicts are distinct: `confirmed` has a complete source trace and bounded observed result, `needs_validation` has an exact unresolved fact and no severity, but a validation priority (P1–P4, from its impact if confirmed and its plausibility) that orders the leads for owners, and `rejected` records a disproved candidate.
 
 Multiple runs against the same repo are additive. The skill uses prior ledgers and findings to target gaps, revalidate changed source, and carry forward current-source evidence without treating stale or unresolved work as covered.
 
@@ -88,7 +88,7 @@ do a security review, output to ~/audits/my-project
 
 The skill activates automatically when the request matches its trigger (security audit, find vulnerabilities, pen-test the code, etc.). A direct codebase audit or pen-test request uses full audit mode. Security questions and focused vulnerability work use guidance mode unless you request report artifacts. In full audit mode, an unspecified output directory defaults to `~/security-audit-skill/<repo-name>/run-<N>`. The workflow writes inside the target repository only when you explicitly select a directory that version control ignores.
 
-While a full audit runs, open `<output-dir>/progress.html` in a browser to follow it. The page shows the current phase, coverage units by status, candidates and their validation history, findings with source traces and reproductions, agents and budget use, open coverage gaps, hardening notes, the architecture summary, and an activity log. It refreshes itself every 15 seconds while the run is in progress, works offline, and never executes text taken from the target. `node <skill-dir>/audit-state.cjs status --run <output-dir>` prints the same state in the terminal.
+While a full audit runs, open `<output-dir>/progress.html` in a browser to follow it. The page shows the current phase, coverage units by status, candidates and their validation history, findings with source traces and reproductions, needs-validation leads ordered and filterable by validation priority, agents and budget use, open coverage gaps, hardening notes, the architecture summary, and an activity log. It refreshes itself every 15 seconds while the run is in progress, works offline, and never executes text taken from the target. `node <skill-dir>/audit-state.cjs status --run <output-dir>` prints the same state in the terminal.
 
 ## Requirements
 

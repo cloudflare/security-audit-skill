@@ -39,6 +39,20 @@ const SEVERITY_RANK = new Map([
   ["high", 3],
   ["critical", 4],
 ]);
+// Validation priority for needs_validation leads: potential impact x plausibility.
+const TRIAGE_PRIORITY = Object.freeze({
+  critical: Object.freeze({ high: "P1", medium: "P1", low: "P2" }),
+  high: Object.freeze({ high: "P1", medium: "P2", low: "P3" }),
+  medium: Object.freeze({ high: "P2", medium: "P3", low: "P3" }),
+  low: Object.freeze({ high: "P3", medium: "P4", low: "P4" }),
+  informational: Object.freeze({ high: "P4", medium: "P4", low: "P4" }),
+});
+
+function triagePriority(potentialImpact, plausibility) {
+  const row = hasOwn(TRIAGE_PRIORITY, potentialImpact) ? TRIAGE_PRIORITY[potentialImpact] : null;
+  return row && hasOwn(row, plausibility) ? row[plausibility] : null;
+}
+
 const LIMITS = Object.freeze({
   inputBytes: 5 * 1024 * 1024,
   nestingDepth: 64,
@@ -547,7 +561,7 @@ function collectFindingSemanticErrors(findings) {
 
     const verdict = finding.verdict;
     if (verdict === "confirmed") {
-      for (const forbidden of ["claimed_root_cause", "blockers", "validation_plan", "reason"]) {
+      for (const forbidden of ["claimed_root_cause", "blockers", "validation_plan", "reason", "triage"]) {
         if (hasOwn(finding, forbidden)) errors.push(`${base}: confirmed finding must not contain ${safeQuote(forbidden)}`);
       }
       if (!finding.execution || typeof finding.execution !== "object" || typeof finding.execution.observed_result !== "string" || !hasVisibleProse(finding.execution.observed_result)) {
@@ -572,8 +586,17 @@ function collectFindingSemanticErrors(findings) {
       if (!hasLocalPlan && !hasDeploymentPlan) {
         errors.push(`${base}.validation_plan: requires at least one visible local or deployment plan`);
       }
+      const triage = finding.triage;
+      if (triage && typeof triage === "object" && !Array.isArray(triage)) {
+        const impact = triage.potential_impact && triage.potential_impact.score;
+        const plausibility = triage.plausibility && triage.plausibility.score;
+        const expected = triagePriority(impact, plausibility);
+        if (expected !== null && triage.priority !== expected) {
+          errors.push(`${base}.triage.priority: must be ${safeQuote(expected)} for potential impact ${safeQuote(impact)} and plausibility ${safeQuote(plausibility)}, got ${safeQuote(triage.priority)}`);
+        }
+      }
     } else if (verdict === "rejected") {
-      for (const forbidden of ["severity", "execution", "remediation", "blockers", "validation_plan", "root_cause"]) {
+      for (const forbidden of ["severity", "execution", "remediation", "blockers", "validation_plan", "root_cause", "triage"]) {
         if (hasOwn(finding, forbidden)) errors.push(`${base}: rejected finding must not contain ${safeQuote(forbidden)}`);
       }
     }
@@ -758,6 +781,7 @@ function run(file) {
 
 module.exports = {
   LIMITS,
+  TRIAGE_PRIORITY,
   PATH_FORBIDDEN_CHARACTER,
   UNSAFE_DIAGNOSTIC_CHARACTER,
   VISIBLE_CONTENT,
@@ -767,6 +791,7 @@ module.exports = {
   collectSchemaErrors,
   hasVisibleProse,
   isSafeRelativeSourcePath,
+  triagePriority,
   validateDocument,
 };
 

@@ -28,10 +28,10 @@ const TOOL = `node ${shellPath(path.join(SKILL_DIR, "audit-state.cjs"))}`;
 const MAX_INPUT_BYTES = 5 * 1024 * 1024;
 const MAX_STATE_BYTES = 64 * 1024 * 1024;
 const STATE_VERSION = 1;
-const ROLES = ["recon", "hunter", "critic", "final-critic", "verifier", "record-verifier"];
-const RESULT_ROLES = new Set(["hunter", "critic", "final-critic", "verifier", "record-verifier"]);
+const ROLES = ["recon", "hunter", "critic", "final-critic", "verifier", "record-verifier", "triager"];
+const RESULT_ROLES = new Set(["hunter", "critic", "final-critic", "verifier", "record-verifier", "triager"]);
 const EXECUTING_ROLES = new Set(["hunter", "verifier", "record-verifier"]);
-const ROLE_PHASE = { recon: 1, hunter: 2, critic: 2, "final-critic": 2, verifier: 3, "record-verifier": 5 };
+const ROLE_PHASE = { recon: 1, hunter: 2, critic: 2, "final-critic": 2, verifier: 3, "record-verifier": 5, triager: 5 };
 const SHARED_FILES = ["run-metadata.json", "architecture.md", "coverage-ledger.json", "findings.json", "REPORT.md", "FINDINGS-DETAIL.md", "NEEDS-VALIDATION.md", "state/", "progress.html"];
 const VERDICT_RANK = { rejected: 0, needs_validation: 1, confirmed: 2 };
 const SEED_STATUSES = ["planned", "deferred", "out_of_scope", "not_applicable"];
@@ -157,9 +157,30 @@ function addRecordHints(specs, recordName) {
   }
   const trace = specs[`${recordName}.trace`];
   if (trace && trace.fields.kind) trace.fields.kind.help = "kind — entrypoint | propagation | sink (may stay empty in a multi-step trace: first step entrypoint, last sink, others propagation)";
+  // The validation priority is derived, never authored: hide it and say so.
+  if (record.fields["triage.priority"]) record.fields["triage.priority"].hidden = true;
+  const firstTriage = record.fields["triage.potential_impact.score"];
+  if (firstTriage) firstTriage.help = [].concat(firstTriage.help, TRIAGE_HINT);
 }
+
+const TRIAGE_HINT = ["the tool computes triage.priority (P1-P4) from the two triage scores; do not write it"];
+
 addRecordHints(RECORD_SPECS, "record");
 addRecordHints(HUNTER_SPECS, "candidate");
+
+const TRIAGE_FIELDS = Object.fromEntries(Object.entries(RECORD_SPECS.record.fields)
+  .filter(([key]) => key.startsWith("triage.") && key !== "triage.priority")
+  .map(([key, spec]) => [key, { ...spec }]));
+
+const TRIAGER_SPECS = {
+  result: { label: "triage result", fields: {}, sections: { lead: "lead", leads: "lead" } },
+  lead: {
+    label: "lead",
+    into: "leads",
+    fields: { fingerprint: field("token", { help: "fingerprint — the assigned lead (already filled in)" }), ...TRIAGE_FIELDS },
+    help: ["[lead] — one per assigned needs_validation record"],
+  },
+};
 
 const VERIFIER_SPECS = {
   ...RECORD_SPECS,
@@ -600,6 +621,23 @@ function inferTraceKinds(record) {
   });
 }
 
+/**
+ * Sets triage.priority from the two triage scores of a needs_validation record
+ * (replacing any authored value) and returns it, or null when a score is missing.
+ */
+function applyTriagePriority(record) {
+  if (record.verdict !== "needs_validation" || !record.triage || typeof record.triage !== "object") return null;
+  const score = (entry) => (entry && typeof entry === "object" ? entry.score : undefined);
+  const priority = findingsValidator.triagePriority(score(record.triage.potential_impact), score(record.triage.plausibility));
+  if (priority) record.triage.priority = priority;
+  else delete record.triage.priority;
+  return priority;
+}
+
+function needsTriage(record) {
+  return Boolean(record) && record.verdict === "needs_validation" && !(record.triage && record.triage.priority);
+}
+
 /** Builds a schema-ordered record and returns schema/semantic errors mapped to lines. */
 function finalizeRecord(raw, verdict, lineInfo, label) {
   const draft = { ...raw };
@@ -607,9 +645,12 @@ function finalizeRecord(raw, verdict, lineInfo, label) {
   const ordered = { verdict, ...draft };
   if (lineInfo && lineInfo.has(raw)) lineInfo.set(ordered, lineInfo.get(raw));
   inferTraceKinds(ordered);
+  const derivedPriority = applyTriagePriority(ordered);
   const branch = branchFor(verdict);
   const record = branch ? normalizeAgainstSchema(ordered, branch, lineInfo) : ordered;
   let messages = findingsValidator.validateDocument([record], SCHEMA);
+  // A missing priority only echoes a missing score, which is reported on its own.
+  if (!derivedPriority) messages = messages.filter((message) => !/triage: missing required field "priority"/.test(message));
   // The oneOf summary line only repeats that the branch errors below exist.
   if (messages.length > 1) messages = messages.filter((message) => !message.includes("must match exactly one schema in oneOf"));
   const errors = messages.map((message) => (lineInfo
@@ -778,8 +819,64 @@ function compileResult(ctx, agent, text, options = {}) {
     case "final-critic": return compileCritic(ctx, agent, text);
     case "verifier": return compileVerifier(ctx, agent, text, options);
     case "record-verifier": return compileRecordVerifier(ctx, agent, text, options);
+    case "triager": return compileTriager(ctx, agent, text);
     default: throw new UserError(`agent ${agent.id} has role ${agent.role}, which returns no result file; use "agent finish"`);
   }
+}
+
+/** A triager adds or revises the validation priority of decided needs_validation records. */
+function compileTriager(ctx, agent, text) {
+  const { value, errors, lineInfo } = parseWith(TRIAGER_SPECS, "result", text);
+  const assigned = new Set(agent.fingerprints);
+  const seen = new Map();
+  const leads = [];
+  for (const raw of value.leads || []) {
+    const line = (lineInfo.get(raw) || {}).line || null;
+    if (!raw.fingerprint) {
+      errors.push({ line, message: "[lead]: fingerprint is required" });
+      continue;
+    }
+    if (!assigned.has(raw.fingerprint)) {
+      errors.push({ line, message: `[lead] ${raw.fingerprint}: not assigned to ${agent.id} (assigned: ${agent.fingerprints.join(", ")})` });
+      continue;
+    }
+    if (seen.has(raw.fingerprint)) {
+      errors.push({ line, message: `[lead] ${raw.fingerprint}: appears twice (first on line ${seen.get(raw.fingerprint)})` });
+      continue;
+    }
+    seen.set(raw.fingerprint, line);
+    const candidate = findCandidate(ctx, raw.fingerprint);
+    const base = clone(candidate.record);
+    delete base.verdict;
+    base.triage = raw.triage || {};
+    if (lineInfo.has(raw)) lineInfo.set(base, lineInfo.get(raw));
+    const finalized = finalizeRecord(base, "needs_validation", lineInfo, `[lead] ${raw.fingerprint}`);
+    errors.push(...finalized.errors);
+    leads.push({ fingerprint: raw.fingerprint, triage: finalized.record.triage, record: finalized.record });
+  }
+  for (const fingerprint of agent.fingerprints) {
+    if (!seen.has(fingerprint)) errors.push({ line: null, message: `assigned lead ${fingerprint} has no [lead] section (add "[lead]" with "fingerprint: ${fingerprint}")` });
+  }
+  const counts = countBy(leads.map((lead) => lead.triage || {}), "priority");
+  const compiled = { leads: leads.map(({ fingerprint, triage }) => ({ fingerprint, triage })) };
+  Object.defineProperty(compiled, "records", { value: leads, enumerable: false });
+  return { compiled, errors: dedupeErrors(errors), summary: `${leads.length} lead(s) triaged (${formatCounts(counts)})` };
+}
+
+function applyTriager(ctx, agent, compiled) {
+  const lines = [];
+  for (const lead of compiled.records) {
+    const candidate = requireCandidate(ctx, lead.fingerprint);
+    const before = candidate.record.triage ? candidate.record.triage.priority : null;
+    candidate.record = lead.record;
+    candidate.triager = null;
+    candidate.final.push({ agent_id: agent.id, decision: "triaged", priority: lead.triage.priority, at: now() });
+    candidate.updated_at = now();
+    recordDecision(ctx, candidate.fingerprint, { phase: 5, agent_id: agent.id, decision: "triaged" });
+    lines.push(`  ${candidate.fingerprint}: ${before ? `${before} → ` : ""}${lead.triage.priority}`);
+  }
+  syncFindingsIfWritten(ctx);
+  return lines;
 }
 
 function compileHunter(ctx, agent, text) {
@@ -1086,8 +1183,19 @@ function findingsRecords(ctx) {
     .sort((left, right) => (left.fingerprint < right.fingerprint ? -1 : left.fingerprint > right.fingerprint ? 1 : 0));
 }
 
+function untriagedLeads(ctx) {
+  return ctx.state.candidates.filter((candidate) => candidate.status !== "removed" && candidate.status !== "duplicate" && needsTriage(candidate.record));
+}
+
 function rebuildFindings(ctx) {
   const records = findingsRecords(ctx);
+  const untriaged = untriagedLeads(ctx);
+  if (untriaged.length > 0) {
+    throw new UserError(`${untriaged.length} needs_validation record(s) have no validation priority yet (they predate triage); add it with a triager agent first`, [
+      `${TOOL} agent start --run ${shellPath(ctx.run)} --agent <id> --role triager --untriaged 5`,
+      ...untriaged.map((candidate) => candidate.fingerprint),
+    ]);
+  }
   const errors = findingsValidator.validateDocument(records, SCHEMA);
   if (errors.length > 0) throw new UserError("findings.json would be invalid; nothing was written", errors);
   if (Buffer.byteLength(JSON.stringify(records, null, 2)) > MAX_INPUT_BYTES) throw new UserError("findings.json would exceed the 5 MiB validator limit");
@@ -1095,8 +1203,19 @@ function rebuildFindings(ctx) {
   ctx.changed.add("findings");
 }
 
+/**
+ * Keeps findings.json in step with the decided records once Phase 4 wrote it.
+ * A run that predates triage keeps its last findings.json until every lead has
+ * a validation priority, because the current schema requires one.
+ */
 function syncFindingsIfWritten(ctx) {
-  if (ctx.state.findings_written_at) rebuildFindings(ctx);
+  if (!ctx.state.findings_written_at) return;
+  const untriaged = untriagedLeads(ctx);
+  if (untriaged.length > 0) {
+    ctx.notes = (ctx.notes || []).concat([`findings.json is rewritten once every needs_validation record has a validation priority; ${untriaged.length} still need one (start a triager)`]);
+    return;
+  }
+  rebuildFindings(ctx);
 }
 
 function recordDecision(ctx, fingerprint, entry) {
@@ -1258,7 +1377,7 @@ function mutate(options, fn) {
     const ctx = openRun(options);
     const output = fn(ctx);
     commit(ctx);
-    return output;
+    return output.concat(ctx.notes || []);
   });
 }
 
@@ -1494,6 +1613,24 @@ function cmdAgentStart(options) {
       candidate.reviewer = id;
       candidate.updated_at = now();
       agent.fingerprints = [candidate.fingerprint];
+    } else if (role === "triager") {
+      const triageable = (candidate) => candidate.record && candidate.record.verdict === "needs_validation" && ["validated", "verified"].includes(candidate.status);
+      const busy = (candidate) => candidate.triager && ctx.state.agents.some((other) => other.id === candidate.triager && other.status === "running");
+      let candidates;
+      if (options.untriaged !== undefined) {
+        const count = Number(options.untriaged);
+        if (!Number.isInteger(count) || count < 1) throw new UserError("--untriaged needs a positive number of leads");
+        candidates = untriagedLeads(ctx).filter((candidate) => triageable(candidate) && !busy(candidate)).slice(0, count);
+        if (candidates.length === 0) throw new UserError("no untriaged needs_validation record is waiting for a triager");
+      } else {
+        candidates = splitList(requireOption(options, "fingerprint", "<fp>[,<fp>...] or --untriaged <n>")).map((fingerprint) => requireCandidate(ctx, fingerprint));
+      }
+      for (const candidate of candidates) {
+        if (!triageable(candidate)) throw new UserError(`${candidate.fingerprint} is not a decided needs_validation record (status ${candidate.status}, verdict ${candidate.verdict || "none"}); triage applies to validated or verified leads`);
+        if (busy(candidate)) throw new UserError(`${candidate.fingerprint} is already being triaged by ${candidate.triager}`);
+      }
+      for (const candidate of candidates) candidate.triager = id;
+      agent.fingerprints = candidates.map((candidate) => candidate.fingerprint);
     }
 
     if (RESULT_ROLES.has(role)) {
@@ -1544,6 +1681,7 @@ function releaseAgent(ctx, agent) {
       candidate.status = candidate.previous_status || "proposed";
       candidate.reviewer = null;
     }
+    if (candidate && candidate.triager === agent.id) candidate.triager = null;
   }
 }
 
@@ -1604,7 +1742,7 @@ function cmdIngest(options) {
     commit(ctx);
     // The compiled contract object, kept as the audit trail of exactly what was ingested.
     writeJson(path.join(ctx.P.results, `${agent.id}.json`), compiled);
-    return [`Ingested ${agent.id}: ${summary}`, ...lines];
+    return [`Ingested ${agent.id}: ${summary}`, ...lines, ...(ctx.notes || [])];
   });
 }
 
@@ -1615,6 +1753,7 @@ function applyResult(ctx, agent, compiled, options) {
     case "final-critic": return applyCritic(ctx, agent, compiled);
     case "verifier": return applyVerifier(ctx, agent, compiled, options);
     case "record-verifier": return applyRecordVerifier(ctx, agent, compiled, options);
+    case "triager": return applyTriager(ctx, agent, compiled);
     default: return [];
   }
 }
@@ -1757,7 +1896,10 @@ function cmdCarry(options) {
     if (!["confirmed", "needs_validation"].includes(record.verdict)) throw new UserError(`only confirmed and needs_validation records are carried; ${fingerprint} is ${record.verdict}`);
     const expected = record.verdict === "confirmed" ? "prior_confirmed_same_source" : "prior_needs_validation";
     if (unit.status !== "planned" || unit.prior_status !== expected) throw new UserError(`carry into a planned unit with prior_status ${expected}; ${alias(unit)} is ${unit.status} with prior_status ${unit.prior_status}`);
-    const errors = findingsValidator.validateDocument([record], SCHEMA);
+    let errors = findingsValidator.validateDocument([record], SCHEMA);
+    // A lead from a run that predates triage still carries; its Phase 3 verifier adds the validation priority.
+    const predatesTriage = record.verdict === "needs_validation" && !hasOwn(record, "triage");
+    if (predatesTriage) errors = errors.filter((message) => !message.includes("missing required field \"triage\"") && !message.includes("must match exactly one schema in oneOf"));
     if (errors.length > 0) throw new UserError(`the prior record no longer meets the current contract; create a revalidation unit instead`, errors);
     const candidate = upsertCandidate(ctx, fingerprint, record.title);
     if (candidate.proposals.some((proposal) => proposal.source === "prior")) throw new UserError(`${fingerprint} is already carried`);
@@ -1871,7 +2013,8 @@ function completionBlockers(ctx) {
     else if (["proposed", "validating"].includes(candidate.status)) blockers.push(`${candidate.fingerprint} has no independent Phase 3 decision`);
     else if (candidate.status === "replacement_pending") blockers.push(`${candidate.fingerprint} has a material replacement awaiting fresh verification`);
     else if (candidate.status === "final_review") blockers.push(`${candidate.fingerprint} is in Phase 5 review`);
-    else if (candidate.status === "validated" && candidate.verdict !== "rejected") blockers.push(`${candidate.fingerprint} has not passed Phase 5 record verification`);
+    else if (candidate.status === "validated" && candidate.verdict !== "rejected" && profile(ctx) !== "quick") blockers.push(`${candidate.fingerprint} has not passed Phase 5 record verification`);
+    if (!["removed", "proposed", "validating"].includes(candidate.status) && needsTriage(candidate.record)) blockers.push(`${candidate.fingerprint} has no validation priority (start a triager)`);
   }
   if (!ctx.state.findings_written_at) blockers.push("findings.json has not been written (findings write)");
   for (const proposal of ctx.state.proposals) if (proposal.status === "open") blockers.push(`proposal ${proposal.id} (${proposal.type}) is still open`);
@@ -1949,6 +2092,8 @@ function nextSteps(ctx) {
   }
   const pendingReplacements = ctx.state.candidates.filter((candidate) => candidate.status === "replacement_pending");
   if (pendingReplacements.length) steps.push(`Material replacements need a fresh record-verifier (or record remove): ${pendingReplacements.map((candidate) => candidate.fingerprint).join(", ")}`);
+  const untriaged = untriagedLeads(ctx).filter((candidate) => ["validated", "verified"].includes(candidate.status) && !candidate.triager);
+  if (untriaged.length) steps.push(`${untriaged.length} needs_validation record(s) predate validation priorities: agent start --role triager --untriaged <n> (a few leads per triager)`);
   if (steps.length === 0 && ctx.metadata && ctx.metadata.run_status === "in_progress" && ctx.state.findings_written_at) steps.push("Write the Phase 6 reports, then: finish --status complete");
   return steps;
 }
@@ -1964,6 +2109,11 @@ function cmdStatus(options) {
   lines.push(`Coverage (${ledger.length} unit(s)): ${formatCounts(countBy(ledger, "status"))}`);
   lines.push(`Candidates (${ctx.state.candidates.length}): ${formatCounts(countBy(ctx.state.candidates, "status"))}`);
   lines.push(`Findings: ${ctx.findings ? formatCounts(countBy(ctx.findings, "verdict")) : "not written yet"}`);
+  const leads = ctx.state.candidates.filter((candidate) => candidate.record && candidate.record.verdict === "needs_validation" && !["removed", "duplicate"].includes(candidate.status));
+  if (leads.length) {
+    const priorities = countBy(leads.map((candidate) => ({ priority: (candidate.record.triage && candidate.record.triage.priority) || "untriaged" })), "priority");
+    lines.push(`Validation priorities of ${leads.length} needs_validation lead(s): ${["P1", "P2", "P3", "P4", "untriaged"].filter((key) => priorities[key]).map((key) => `${key} ${priorities[key]}`).join(", ")}`);
+  }
   const open = ctx.state.proposals.filter((proposal) => proposal.status === "open");
   lines.push(`Open proposals: ${open.length ? open.map((proposal) => `${proposal.id} ${proposal.type} from ${proposal.from_agent}`).join("; ") : "none"}`);
   if (ctx.ledger) {
@@ -1985,6 +2135,13 @@ function unitDisplay(unit) {
   return [`# ${alias(unit)} — ${unit.status}, wave ${unit.wave}`, ...RT.displayText(shown)];
 }
 
+/** A comment line naming a lead's derived validation priority, which templates hide. */
+function priorityNote(record) {
+  const triage = record && record.triage;
+  if (!triage || !triage.priority) return [];
+  return [`# validation priority ${triage.priority} (impact if confirmed: ${triage.potential_impact.score}; plausibility: ${triage.plausibility.score}) — not a severity`];
+}
+
 function cmdShow(options, positionals) {
   const ctx = openRun(options);
   const [kind, ref] = positionals;
@@ -2003,13 +2160,13 @@ function cmdShow(options, positionals) {
       const candidate = requireCandidate(ctx, ref);
       return emit(candidate, () => {
         const record = candidate.pending ? candidate.pending.record : candidate.record || (candidate.proposals[0] && candidate.proposals[0].record);
-        return [`# ${candidate.fingerprint} — ${candidate.status}${candidate.verdict ? ` (${candidate.verdict})` : ""}; proposed by ${candidate.proposals.map((proposal) => proposal.agent_id).join(", ")}; linked units ${linkedUnits(ctx, candidate.fingerprint).map(alias).join(", ") || "none"}`, RT.serializeRecordText(record, RECORD_SPECS, "record").trimEnd()];
+        return [`# ${candidate.fingerprint} — ${candidate.status}${candidate.verdict ? ` (${candidate.verdict})` : ""}; proposed by ${candidate.proposals.map((proposal) => proposal.agent_id).join(", ")}; linked units ${linkedUnits(ctx, candidate.fingerprint).map(alias).join(", ") || "none"}`, ...priorityNote(record), RT.serializeRecordText(record, RECORD_SPECS, "record").trimEnd()];
       });
     }
     case "finding": {
       const record = (ctx.findings || []).find((entry) => entry.fingerprint === ref);
       if (!record) throw new UserError(`findings.json has no record ${JSON.stringify(ref)}`);
-      return emit(record, () => [RT.serializeRecordText(record, RECORD_SPECS, "record").trimEnd()]);
+      return emit(record, () => [...priorityNote(record), RT.serializeRecordText(record, RECORD_SPECS, "record").trimEnd()]);
     }
     case "agent": {
       const agent = requireAgent(ctx, ref);
@@ -2078,7 +2235,13 @@ function cmdBrief(options) {
       }
     } else {
       const record = candidate.pending ? candidate.pending.record : candidate.record;
-      lines.push(`## Record to verify: ${candidate.fingerprint} (${record.verdict}${candidate.pending ? `, pending replacement proposed by ${candidate.pending.agent_id}` : ""})`, RT.serializeRecordText(record, RECORD_SPECS, "record").trimEnd());
+      lines.push(`## Record to verify: ${candidate.fingerprint} (${record.verdict}${candidate.pending ? `, pending replacement proposed by ${candidate.pending.agent_id}` : ""})`, ...priorityNote(record), RT.serializeRecordText(record, RECORD_SPECS, "record").trimEnd());
+    }
+  } else if (agent.role === "triager") {
+    lines.push("## Task", ...TRIAGE_GUIDE, "", `## Leads to triage (${agent.fingerprints.length})`);
+    for (const fingerprint of agent.fingerprints) {
+      const record = requireCandidate(ctx, fingerprint).record;
+      lines.push("", `[lead ${fingerprint}]`, ...priorityNote(record), RT.serializeRecordText(record, RECORD_SPECS, "record").trimEnd());
     }
   } else if (agent.role === "critic" || agent.role === "final-critic") {
     lines.push(`## Coverage ledger (${ledger.length} units) with assignment block maps`);
@@ -2187,8 +2350,37 @@ function criticTemplate(ctx, agent) {
   return RT.serializeRecordText({}, CRITIC_SPECS, "result", { skeleton: true, header });
 }
 
+const TRIAGE_GUIDE = [
+  "Give each needs_validation lead a validation priority. Do not change its verdict, trace, blockers, or plans, and never present the result as a severity.",
+  "Read the cited source; do not run target code or contact any service. Score potential impact as if the claimed root cause holds, with the SKILL.md severity anchors, and name the affected principal or resource.",
+  "Score plausibility by how strongly the visible source supports the vulnerable outcome, and name exactly what the blocker hides:",
+  "  high: only the blocked fact stands between the visible source and the result",
+  "  medium: the source points that way, but a plausible control may sit behind the blocker",
+  "  low: the visible source leans against the result",
+  "The tool derives the priority from the two scores:",
+  "  impact critical: P1 (plausibility high or medium), P2 (low)",
+  "  impact high:     P1 (high), P2 (medium), P3 (low)",
+  "  impact medium:   P2 (high), P3 (medium or low)",
+  "  impact low:      P3 (high), P4 (medium or low); informational: P4",
+];
+
+function triagerTemplate(ctx, agent) {
+  const header = [
+    `Triage result for ${agent.id}. Record text — not JSON. One [lead] per assigned record; fill in the four triage fields.`,
+    ...TRIAGE_GUIDE,
+    `Check: ${TOOL} check --run ${shellPath(ctx.run)} --agent ${agent.id}`,
+    "",
+  ];
+  const leads = agent.fingerprints.map((fingerprint) => {
+    const triage = (requireCandidate(ctx, fingerprint).record || {}).triage;
+    return { fingerprint, ...(triage ? { triage: { potential_impact: triage.potential_impact, plausibility: triage.plausibility } } : {}) };
+  });
+  return RT.serializeRecordText({ leads }, TRIAGER_SPECS, "result", { skeleton: true, header });
+}
+
 function buildTemplate(ctx, agent, { decision } = {}) {
   switch (agent.role) {
+    case "triager": return triagerTemplate(ctx, agent);
     case "hunter": return hunterTemplate(ctx, agent);
     case "verifier": return verifierTemplate(ctx, agent, decision);
     case "record-verifier": return recordVerifierTemplate(ctx, agent, decision);
@@ -2206,7 +2398,8 @@ function genericTemplate(kind) {
     case "critic": return RT.serializeRecordText({}, CRITIC_SPECS, "result", { skeleton: true });
     case "verifier": return RT.serializeRecordText({}, VERIFIER_SPECS, "result", { skeleton: true });
     case "record-verifier": return RT.serializeRecordText({}, RECORD_VERIFIER_SPECS, "result", { skeleton: true });
-    default: throw new UserError("template kinds: metadata | units | hunter | critic | verifier | record-verifier (or --run <dir> --agent <id> for a pre-filled one)");
+    case "triager": return RT.serializeRecordText({}, TRIAGER_SPECS, "result", { skeleton: true, header: TRIAGE_GUIDE.concat([""]) });
+    default: throw new UserError("template kinds: metadata | units | hunter | critic | verifier | record-verifier | triager (or --run <dir> --agent <id> for a pre-filled one)");
   }
 }
 
@@ -2243,6 +2436,7 @@ Parent (the only writer of shared run files):
   units reassign --run <dir> --unit U3 --reason <text> [--defer <reason>]
   units note     --run <dir> --unit U3 --text <text>
   agent start    --run <dir> --agent <id> --role <role> [--units U1,U2 | --fingerprint <fp>] [--note <text>]
+                 triager: --fingerprint <fp>,<fp>... | --untriaged <n>   adds validation priorities to needs_validation leads
                  roles: ${ROLES.join(", ")}
   agent finish   --run <dir> --agent <id>                  recon agents (prose results)
   agent fail     --run <dir> --agent <id> --reason <text>  release its units/candidates

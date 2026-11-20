@@ -355,9 +355,56 @@
               }
             },
             "additionalProperties": false
+          },
+          "triage": {
+            "type": "object",
+            "description": "Validation priority for ordering unresolved leads. It is not severity: it states the impact only if the claimed root cause holds.",
+            "properties": {
+              "potential_impact": {
+                "type": "object",
+                "description": "The impact if the claimed root cause holds and the blocker resolves in the attacker's favor, scored with the severity anchors in SKILL.md and naming the affected principal or resource.",
+                "properties": {
+                  "score": {
+                    "type": "string",
+                    "enum": ["informational", "low", "medium", "high", "critical"]
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1,
+                    "visibleContent": true
+                  }
+                },
+                "required": ["score", "reason"],
+                "additionalProperties": false
+              },
+              "plausibility": {
+                "type": "object",
+                "description": "How strongly the visible source supports the vulnerable outcome. The reason names what the blocker hides.",
+                "properties": {
+                  "score": {
+                    "type": "string",
+                    "enum": ["low", "medium", "high"]
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1,
+                    "visibleContent": true
+                  }
+                },
+                "required": ["score", "reason"],
+                "additionalProperties": false
+              },
+              "priority": {
+                "type": "string",
+                "enum": ["P1", "P2", "P3", "P4"],
+                "description": "Derived from potential_impact and plausibility by the fixed table in VALIDATION-AND-REPORTING.md."
+              }
+            },
+            "required": ["potential_impact", "plausibility", "priority"],
+            "additionalProperties": false
           }
         },
-        "required": ["verdict", "fingerprint", "title", "description", "claimed_root_cause", "trace", "evidence", "blockers", "validation_plan"],
+        "required": ["verdict", "fingerprint", "title", "description", "claimed_root_cause", "trace", "evidence", "blockers", "validation_plan", "triage"],
         "additionalProperties": false
       },
       {

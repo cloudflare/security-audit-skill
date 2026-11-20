@@ -166,6 +166,24 @@ Calibrate overall severity with these anchors:
 
 The high/medium discriminator: does the demonstrated result fully defeat an explicit control for an action with real consequences, or only weaken it? If you cannot state the concrete damage, the severity is lower than it feels.
 
+### Order unresolved leads by validation priority
+
+A `needs_validation` record has no severity, but owners still need to know which lead to settle first. Each one carries a validation priority in `triage`:
+
+- **`potential_impact`** — the impact *if* the claimed root cause holds and the blocker resolves in the attacker's favor, scored with the severity anchors above. The reason names the affected principal or resource and claims nothing the claimed root cause could not do.
+- **`plausibility`** — how strongly the visible source supports the vulnerable outcome, and what exactly the blocker hides: `high` when only the blocked fact stands between the visible source and the result, `medium` when the source points that way but a plausible control may sit behind the blocker, `low` when the visible source leans against the result.
+- **`priority`** — derived from the two scores by this table; `audit-state.cjs` computes it and agents never write it.
+
+| Potential impact | High plausibility | Medium | Low |
+|---|---|---|---|
+| critical | P1 | P1 | P2 |
+| high | P1 | P2 | P3 |
+| medium | P2 | P3 | P3 |
+| low | P3 | P4 | P4 |
+| informational | P4 | P4 | P4 |
+
+A validation priority orders validation work. It never changes a verdict, blocker, or evidence, and it is never presented as a severity, merged into the confirmed-findings table, or used to rank a lead above the evidence bar.
+
 ### Recommend the smallest effective source fix
 
 For each confirmed finding, identify the invariant the code must enforce and the narrowest source change that enforces it at the last trusted decision point. Prefer specific repository-relative changes and regression tests over generic hardening advice. The audit describes fixes; it does not modify target source.
@@ -193,6 +211,6 @@ Do not end the run before one of exactly two terminal states: (a) all Phase 6 ar
 6. Reporting a parser or runtime effect stronger than the observed effect.
 7. Emitting prose-only hunter results that cannot be deduplicated or verified.
 8. Re-reporting carried same-source prior confirmed records or using them as exemplars that anchor the hunt.
-9. Assigning severity to `needs_validation` records.
+9. Assigning severity to `needs_validation` records, or presenting their validation priority or impact if confirmed as one.
 10. Writing the report before independent verification or letting prose and JSON disagree.
 11. Hand-writing or hand-repairing run JSON, or editing an agent's result file, instead of using `audit-state.cjs`.

@@ -36,7 +36,10 @@ unavailable or fails, do not use that file as evidence.
 5. For a proposed needs_validation candidate, decide whether the blocker is genuinely
    outside source/local observation. If source refutes the trace, reject it. If the
    missing fact remains decisive, keep needs_validation and make the local and
-   owner-observed plans exact and non-destructive.
+   owner-observed plans exact and non-destructive. Set its triage from your own
+   reading: the impact if the claimed root cause holds, and how strongly the visible
+   source supports the vulnerable outcome. Triage orders validation work; it is never
+   a severity.
 6. Preserve the fingerprint for the same source-derived root cause across every state.
 
 Write your result as record text, never JSON, in the result file named at the end
@@ -108,7 +111,7 @@ The parent runs `audit-state.cjs findings write`, which writes all independently
 The tool builds every record against `report-schema.json`, which uses `additionalProperties: false`, so hunter wrapper fields never reach a record. It enforces these distinct verdict contracts, which verifiers must satisfy in their records:
 
 - A `confirmed` record uses `root_cause`, `intended_behavior`, `conditions`, `execution`, `remediation`, `severity`, and `confidence`. It must not use `claimed_root_cause`, `blockers`, `validation_plan`, or `reason`. `execution` is target-neutral and uses the target's native interface: API/HTTP input, CLI call, library call, message, file fixture, browser action, rendered policy, or local harness as applicable. `observed_result` is nonempty and factual.
-- A `needs_validation` record uses `claimed_root_cause`, `trace`, `evidence`, `blockers`, and at least one nonempty `validation_plan.local` or `validation_plan.deployment` field. Include both only when both contexts can resolve distinct facts. It must not use severity, execution, remediation, reason, or confirmed root cause.
+- A `needs_validation` record uses `claimed_root_cause`, `trace`, `evidence`, `blockers`, at least one nonempty `validation_plan.local` or `validation_plan.deployment` field, and `triage` (validation priority, defined in `SKILL.md`; the tool derives `triage.priority` from its two scores). Include both plan fields only when both contexts can resolve distinct facts. It must not use severity, execution, remediation, reason, or confirmed root cause.
 - A `rejected` record uses `claimed_root_cause`, `trace`, `evidence`, and `reason`. It must not use severity, execution, remediation, blockers, validation plan, or confirmed root cause.
 
 Every record has a stable fingerprint, title, description, and repository-relative source paths. A multi-step trace begins with `entrypoint`, ends with `sink`, and uses `propagation` only between them. One-entry traces use `entrypoint` or `sink`. Overall severity cannot exceed demonstrated impact.
@@ -144,6 +147,7 @@ For `needs_validation`, require it to check:
 3. The candidate names a boundary and a possible concrete result rather than a generic concern.
 4. At least one validation-plan field is present and exact. `local` uses a bounded fixture; `deployment` asks an owner to observe a configuration, identity, route, policy, or runtime fact. Do not invent a plan for an inapplicable context, and never send audit traffic to a deployment.
 5. The fingerprint matches prior/current records for the same root cause.
+6. The triage is sound: the impact if confirmed names the affected principal or resource and claims nothing the claimed root cause could not do, and the plausibility reason names what the blocker hides. A change to triage alone is not material.
 
 Each verifier writes record text that compiles into exactly one of `{"decision":"verified","fingerprint":"..."}` or `{"decision":"replace","reason":"...","record":{...}}`; `template --decision replace --write --force` pre-fills the replacement record. A replacement record must match its `confirmed`, `needs_validation`, or `rejected` schema branch. Treat a rejected Phase 5 result the same way as in Phase 3: the parent never repairs it, returns the reported lines to the same verifier when possible, and otherwise re-runs with a fresh verifier when the budget permits.
 
@@ -165,7 +169,7 @@ Write:
 2. One short security posture summary.
 3. A confirmed-findings table: severity, title, affected boundary, and one-line observed result.
 4. Each confirmed finding: repository source location, lower-trust principal, target-native bounded reproduction, conditions, actual result, impact, priority rationale, and smallest source fix.
-5. A separate `NEEDS VALIDATION` table. Give each lead's title, repository trace, exact blocker, bounded local next step, and safe owner-observed deployment check. Do not assign severity or call it a confirmed vulnerability.
+5. A separate `NEEDS VALIDATION` table, ordered by validation priority (P1 first). Give each lead's title, validation priority, impact if confirmed, repository trace, exact blocker, bounded local next step, and safe owner-observed deployment check. Label the priority and impact if confirmed as exactly that; do not assign severity or call it a confirmed vulnerability.
 6. Separate hardening notes and positive source patterns.
 7. Coverage summary from the ledger: covered, candidate, blocked, and deferred counts, plus important exclusions and the final critic result.
 
@@ -184,7 +188,7 @@ For each confirmed `medium`, `high`, or `critical` record, copy the complete sou
 
 #### `NEEDS-VALIDATION.md`
 
-For every unresolved record, copy the source trace, verified evidence, exact blocker, affected boundary, and each applicable bounded local or owner-observed resolution plan. Keep these as prioritized leads without severity. Do not turn them into live test guidance or assume the missing deployment fact.
+For every unresolved record, copy the source trace, verified evidence, exact blocker, affected boundary, and each applicable bounded local or owner-observed resolution plan. Keep these as prioritized leads without severity: order them by validation priority, P1 first, and within each priority put the leads an owner can settle with a bounded local test (a `validation_plan.local`) before those that need a deployment observation. Give each lead's priority, impact if confirmed, and plausibility with their reasons. Do not turn them into live test guidance or assume the missing deployment fact.
 
 HTTP is one possible native interface, not the default. A library finding may use a function call, a parser a fixture, a CLI a command, a desktop app an IPC or file action, and infrastructure a locally rendered policy. Do not require an endpoint, external account, or live environment that the target does not have.
 

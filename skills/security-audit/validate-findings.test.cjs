@@ -9,6 +9,7 @@ const {
   LIMITS,
   collect,
   collectSchemaErrors,
+  triagePriority,
   validateDocument,
 } = require("./validate-findings.cjs");
 
@@ -77,6 +78,11 @@ function needsValidation() {
     validation_plan: {
       local: "Generate the parser and submit the smallest input that exceeds the documented limit.",
       deployment: "In an approved test deployment, confirm the request reaches the generated parser and record the bounded observable result.",
+    },
+    triage: {
+      potential_impact: { score: "high", reason: "An unbounded allocation would stop the shared parser service." },
+      plausibility: { score: "medium", reason: "The size reaches allocate unchecked in visible source; the generated parser may still clamp it." },
+      priority: "P2",
     },
   };
 }
@@ -526,6 +532,38 @@ test("checks pattern and branch invariants", () => {
   rejectMutation(needsValidation, (finding) => {
     finding.severity = { impact: { score: "low" }, overall_severity: "low" };
   });
+});
+
+test("requires a needs_validation triage whose priority follows the fixed table", () => {
+  rejectMutation(needsValidation, (finding) => { delete finding.triage; });
+  rejectMutation(needsValidation, (finding) => { delete finding.triage.priority; });
+  rejectMutation(needsValidation, (finding) => { finding.triage.plausibility.reason = " "; });
+  rejectMutation(needsValidation, (finding) => { finding.triage.potential_impact.score = "severe"; });
+  const mismatch = needsValidation();
+  mismatch.triage.priority = "P1";
+  assert(errorsFor([mismatch]).some((error) => /triage\.priority: must be "P2" for potential impact "high" and plausibility "medium"/.test(error)));
+  for (const impact of ["critical", "high", "medium", "low", "informational"]) {
+    for (const plausibility of ["high", "medium", "low"]) {
+      const finding = needsValidation();
+      finding.triage.potential_impact.score = impact;
+      finding.triage.plausibility.score = plausibility;
+      finding.triage.priority = triagePriority(impact, plausibility);
+      assert.deepEqual(errorsFor([finding]), [], `${impact}/${plausibility}`);
+    }
+  }
+  assert.equal(triagePriority("critical", "low"), "P2");
+  assert.equal(triagePriority("low", "high"), "P3");
+  assert.equal(triagePriority("unknown", "high"), null);
+});
+
+test("keeps triage out of confirmed and rejected records", () => {
+  const triage = needsValidation().triage;
+  const demonstrated = confirmed();
+  demonstrated.triage = triage;
+  assert(errorsFor([demonstrated]).some((error) => error.includes("confirmed finding must not contain \"triage\"")));
+  const refuted = rejected();
+  refuted.triage = triage;
+  assert(errorsFor([refuted]).some((error) => error.includes("rejected finding must not contain \"triage\"")));
 });
 
 test("rejects unsupported and malformed schema keywords", () => {
