@@ -15,7 +15,7 @@ The skill runs a structured audit in six phases:
 5. **Independent record verification** -- fresh agents verify final source claims. Material replacements receive another independent verifier.
 6. **Target-neutral reporting** -- derive `REPORT.md`, `FINDINGS-DETAIL.md`, and `NEEDS-VALIDATION.md` from the verified records and coverage ledger.
 
-The parent runs `validate-coverage-ledger.cjs` after creating the ledger and after each later ledger update. It runs `validate-findings.cjs` in Phase 4 and again after every Phase 5 replacement.
+No agent writes JSON by hand. Agents write their results as **record text** — `key: value` lines with no quoting or escaping — and `audit-state.cjs` compiles them into the JSON contracts, enforces the ledger state table and verdict contracts, and reports every problem by source line so the agent can fix its own file. The tool runs `validate-coverage-ledger.cjs` and `validate-findings.cjs` in-process before every write, so the run files on disk are always valid, and it regenerates `progress.html`, a human-readable view of the run, after every change.
 
 The verdicts are distinct: `confirmed` has a complete source trace and bounded observed result, `needs_validation` has an exact unresolved fact and no severity, and `rejected` records a disproved candidate.
 
@@ -40,6 +40,11 @@ Multiple runs against the same repo are additive. The skill uses prior ledgers a
 | `DATA-ISOLATION-AND-LIFECYCLE.md` | Tenant isolation, cache, search, export, backup, migration, deletion, and restore hunting classes |
 | `DESKTOP-MOBILE-AND-LOCAL-IPC.md` | Native app, deep-link, webview, exported-component, helper, daemon, and local-IPC hunting classes |
 | `VALIDATION-AND-REPORTING.md` | Phases 3–6 candidate validation, structured output, record verification, and reporting |
+| `AUDIT-STATE-TOOL.md` | Record-text format, file ownership, and the `audit-state.cjs` command for each phase |
+| `audit-state.cjs` | Zero-dependency tool that builds and validates every run JSON file from record text and regenerates `progress.html` |
+| `record-text.cjs` | Record-text parser, serializer, and schema-derived templates used by `audit-state.cjs` |
+| `progress-report.cjs` | Renderer for the self-contained, escaped `progress.html` run view |
+| `audit-state.test.cjs` | Tool, record-text, workflow, and progress-report tests |
 | `report-schema.json` | JSON schema for all three `findings.json` verdicts |
 | `validate-findings.cjs` | Zero-dependency validator for `findings.json` in Phases 4 and 5 |
 | `validate-findings.test.cjs` | Findings-validator tests and producer-compatible fixture checks |
@@ -83,10 +88,12 @@ do a security review, output to ~/audits/my-project
 
 The skill activates automatically when the request matches its trigger (security audit, find vulnerabilities, pen-test the code, etc.). A direct codebase audit or pen-test request uses full audit mode. Security questions and focused vulnerability work use guidance mode unless you request report artifacts. In full audit mode, an unspecified output directory defaults to `~/security-audit-skill/<repo-name>/run-<N>`. The workflow writes inside the target repository only when you explicitly select a directory that version control ignores.
 
+While a full audit runs, open `<output-dir>/progress.html` in a browser to follow it. The page shows the current phase, coverage units by status, candidates and their validation history, findings with source traces and reproductions, agents and budget use, open coverage gaps, hardening notes, the architecture summary, and an activity log. It refreshes itself every 15 seconds while the run is in progress, works offline, and never executes text taken from the target. `node <skill-dir>/audit-state.cjs status --run <output-dir>` prints the same state in the terminal.
+
 ## Requirements
 
 - A coding agent with a model that supports tool use and parallel sub-agents
-- Node.js for the zero-dependency findings and coverage-ledger validators
+- Node.js for the zero-dependency `audit-state.cjs` tool and the findings and coverage-ledger validators
 - An OS-enforced sandbox for target-controlled builds, tests, processes, browsers, emulators, fuzzers, and fixtures. It must disable external networking, use a sanitized allowlisted environment, enforce resource limits, and allow writes only to assigned scratch paths. Without these controls, the workflow keeps the lead as `needs_validation` instead of executing target code.
 
 ## Design principles
