@@ -4,7 +4,7 @@
 
 After the clean coverage-critic pass or an explicitly recorded early stop, consolidate Phase 2 candidates and carried same-source prior confirmations by stable fingerprint and root cause. Give every unique proposed `confirmed` and `needs_validation` candidate to a fresh `general` verifier that did not hunt it. A carried prior confirmation follows the same current verification path even though hunters exclude that unchanged root cause. A verifier may read hunter or prior artifacts but must re-read every cited current source location and independently run any decisive check it can reproduce safely.
 
-Assign each verifier a canonical lowercase unique ID and `<output-dir>/agents/<verifier-id>/scratch/` plus parent-owned `artifacts/`. The verifier writes only to `scratch/` and never writes retained artifacts. It receives only the candidate, its linked coverage-unit checks and artifact paths, architecture facts needed to interpret the path, exact relevant companion validation blocks, the promotion procedure block below, the source/local execution boundary, the `confirmed`, `needs_validation`, and `rejected` branches of `report-schema.json` copied verbatim, and prior records with the same fingerprint. It must not receive another verifier's conclusion.
+Assign each verifier with `audit-state.cjs agent start --agent <verifier-id> --role verifier --fingerprint <fingerprint>`, which gives it a canonical lowercase unique ID, `<output-dir>/agents/<verifier-id>/scratch/` plus parent-owned `artifacts/`, and a `result.txt` pre-filled with the candidate under review. The tool refuses a verifier that proposed, validated, or replaced the same candidate. The verifier writes only to `scratch/` and its own `result.txt`, and never writes retained artifacts. It receives only the candidate, its linked coverage-unit checks and artifact paths, and prior records with the same fingerprint (the output of `audit-state.cjs brief --agent <verifier-id>`), architecture facts needed to interpret the path, exact relevant companion validation blocks, the promotion procedure block below, and the source/local execution boundary. Its result template carries the `confirmed`, `needs_validation`, and `rejected` branches of `report-schema.json` with their schema descriptions, and `check` validates against them. It must not receive another verifier's conclusion.
 
 #### Candidate-verifier prompt
 
@@ -39,10 +39,15 @@ unavailable or fails, do not use that file as evidence.
    owner-observed plans exact and non-destructive.
 6. Preserve the fingerprint for the same source-derived root cause across every state.
 
-Return exactly one JSON object and no surrounding prose:
-{"decision": "confirmed|needs_validation|rejected", "record": { ... }}
-where record exactly matches the decision's verdict branch of the schema included
-in this prompt. A corrected record replaces the hunter's wording.
+Write your result as record text, never JSON, in the result file named at the end
+of this prompt. It starts with `decision:` and a [record] pre-filled with the
+candidate; correct the record so it exactly matches your decision's verdict, which
+the template's comments describe. A corrected record replaces the hunter's wording.
+For a different decision, regenerate a correctly shaped record with:
+audit-state.cjs template --run <output-dir> --agent <your-id> --decision <decision> --write --force
+Add a [check] for each linked unit you re-checked; one is required for a carried
+prior record's unit. Run audit-state.cjs check until it prints OK, then reply with
+exactly one line: RESULT agents/<your-id>/result.txt
 ```
 
 Copy this promotion procedure verbatim into every candidate-verifier prompt:
@@ -86,21 +91,21 @@ file separately:
 
 A verifier can promote `needs_validation` to `confirmed` only after independently establishing the complete path and bounded observed result. Demote proposed confirmation to `needs_validation` when a specific deployment or runtime fact remains unknown. Use `rejected` when source, local behavior, a visible control, missing meaningful impact, or an impossible prerequisite refutes the claim. `needs_validation` is never a parking place for a speculative idea.
 
-The parent checks that each verifier returned the same fingerprint unless it identified a genuinely different root cause. Merge corrections, record the decision in every linked coverage unit, and ensure there is one final record per fingerprint. Discard a malformed or prose-wrapped verifier result without repairing it; re-run that candidate with a fresh verifier when the budget permits, otherwise it remains an unvalidated ledger candidate under the incomplete-run rule.
+The verifier's record text compiles into exactly `{"decision": "confirmed|needs_validation|rejected", "record": { ... }}`, where `record` matches the decision's verdict branch of the schema; its `[check]` sections are the verifier's own ledger evidence. The parent runs `audit-state.cjs ingest --agent <verifier-id>`. Ingest checks that the verifier returned the same fingerprint; when it identified a genuinely different root cause, the parent passes `--new-root-cause` and the candidate and its linked units move to the new fingerprint. Ingest merges the corrected record, records the decision in every linked coverage unit, and keeps one final record per fingerprint. The parent never repairs a malformed result. It returns the reported lines to the same verifier when the platform can continue it; otherwise it runs `agent fail` and re-runs that candidate with a fresh verifier when the budget permits, otherwise it remains an unvalidated ledger candidate under the incomplete-run rule.
 
-When verifier evidence updates a ledger check, set that check's `agent_id` to the verifier's canonical ID and list its nonempty repository-relative `reviewed_paths`. Keep the unit-level `reviewed_paths` equal to the union across checks. Use `method: "source"` with `artifact: null` for source-only review. Use `method: "local"` only with a file successfully promoted by trusted parent-side code below `agents/<check.agent_id>/artifacts/`. The unit retains its original assignment owner, so independently owned hunter and verifier checks can coexist. For a carried prior record's seeded `planned` unit there is no prior owner: the verifier that re-checks it becomes the unit's assignment owner, and its re-check is the unit's first check, moving the unit to `candidate` with the carried fingerprint.
+When verifier evidence updates a ledger check, the check's `agent_id` is the verifier's canonical ID (the default in its `[check]` sections) with nonempty repository-relative `reviewed_paths`. Ingest keeps the unit-level `reviewed_paths` equal to the union across checks. Use `method: "source"` with an empty `artifact` for source-only review. Use `method: "local"` only with a file successfully promoted by trusted parent-side code below `agents/<check.agent_id>/artifacts/`. The unit retains its original assignment owner, so independently owned hunter and verifier checks can coexist. For a carried prior record's seeded `planned` unit there is no prior owner: `agent start` makes the verifier that re-checks it the unit's assignment owner, and its required `[check]` becomes the unit's first check, moving the unit to `candidate` with the carried fingerprint.
 
 If a strict total-agent budget cannot cover every candidate, set the run status to incomplete and follow the deterministic budget rule in `SKILL.md`. An unvalidated candidate remains only in the ledger. It does not enter `findings.json` under any verdict.
 
 ### Phase 4: Write and validate `findings.json`
 
-The parent writes all independently decided records to `<output-dir>/findings.json`, sorted by fingerprint. Include:
+The parent runs `audit-state.cjs findings write`, which writes all independently decided records to `<output-dir>/findings.json`, sorted by fingerprint, and lists any candidate still lacking an independent decision. After this first write, every later decision or applied replacement rewrites and revalidates the file automatically. It includes:
 
 - `confirmed`: source-grounded vulnerabilities with complete local execution evidence, conditions, specific remediation, likelihood/impact/overall severity, and confidence.
 - `needs_validation`: source-grounded candidates with an exact unresolved blocker and at least one applicable local or owner-observed deployment plan.
 - `rejected`: source-grounded candidates disproved during validation, retained so future runs do not repeat the unsupported claim without changed evidence.
 
-Read `report-schema.json` immediately before writing. It uses `additionalProperties: false`; do not carry hunter wrapper fields into a record. Keep these verdict contracts distinct:
+The tool builds every record against `report-schema.json`, which uses `additionalProperties: false`, so hunter wrapper fields never reach a record. It enforces these distinct verdict contracts, which verifiers must satisfy in their records:
 
 - A `confirmed` record uses `root_cause`, `intended_behavior`, `conditions`, `execution`, `remediation`, `severity`, and `confidence`. It must not use `claimed_root_cause`, `blockers`, `validation_plan`, or `reason`. `execution` is target-neutral and uses the target's native interface: API/HTTP input, CLI call, library call, message, file fixture, browser action, rendered policy, or local harness as applicable. `observed_result` is nonempty and factual.
 - A `needs_validation` record uses `claimed_root_cause`, `trace`, `evidence`, `blockers`, and at least one nonempty `validation_plan.local` or `validation_plan.deployment` field. Include both only when both contexts can resolve distinct facts. It must not use severity, execution, remediation, reason, or confirmed root cause.
@@ -108,18 +113,18 @@ Read `report-schema.json` immediately before writing. It uses `additionalPropert
 
 Every record has a stable fingerprint, title, description, and repository-relative source paths. A multi-step trace begins with `entrypoint`, ends with `sink`, and uses `propagation` only between them. One-entry traces use `entrypoint` or `sink`. Overall severity cannot exceed demonstrated impact.
 
-Run:
+`audit-state.cjs` runs both validators in-process before every write and refuses any change that would fail them. Also run the validator CLIs:
 
 ```sh
 node <skill-dir>/validate-findings.cjs <output-dir>/findings.json
 node <skill-dir>/validate-coverage-ledger.cjs <output-dir>/coverage-ledger.json
 ```
 
-Fix every structural and semantic error before continuing. The findings validator rejects input beyond 5 MiB, 1,000 top-level findings, or 64 nesting levels, and caps reported error output at 100 messages. Validator success proves format and ledger consistency only.
+The CLIs require OS no-follow file protection and refuse every input where Node lacks it (for example on Windows); there the tool's in-process validation is the check. Fix every structural and semantic error before continuing. The findings validator rejects input beyond 5 MiB, 1,000 top-level findings, or 64 nesting levels, and caps reported error output at 100 messages. Validator success proves format and ledger consistency only.
 
 ### Phase 5: Verify the final records with fresh eyes
 
-Launch one fresh `research` verifier per final `confirmed` and `needs_validation` record, in parallel. This verifier checks the structured record, not the hunter write-up, and remains inside source/local boundaries.
+Launch one fresh `research` verifier per final `confirmed` and `needs_validation` record, in parallel, each registered with `audit-state.cjs agent start --role record-verifier --fingerprint <fingerprint>`. This verifier checks the structured record, not the hunter write-up, and remains inside source/local boundaries. Its prompt includes the output of `brief`, which carries the record under review in record text and the result-file instructions.
 
 In a `quick` run, Phase 3 and Phase 5 merge: the Phase 3 verifier also performs these record checks and returns the final schema-shaped record, so each candidate gets one fresh independent reviewer instead of two. Every other profile keeps the two passes separate. Never skip independent review of a `confirmed` record in any profile.
 
@@ -140,17 +145,17 @@ For `needs_validation`, require it to check:
 4. At least one validation-plan field is present and exact. `local` uses a bounded fixture; `deployment` asks an owner to observe a configuration, identity, route, policy, or runtime fact. Do not invent a plan for an inapplicable context, and never send audit traffic to a deployment.
 5. The fingerprint matches prior/current records for the same root cause.
 
-Each verifier returns exactly one JSON object: `{"decision":"verified","fingerprint":"..."}` or `{"decision":"replace","reason":"...","record":{...}}`, with no surrounding prose. A replacement record must match its `confirmed`, `needs_validation`, or `rejected` schema branch. Treat a malformed or prose-wrapped Phase 5 result the same way as in Phase 3: discard it without repairing it and re-run with a fresh verifier when the budget permits.
+Each verifier writes record text that compiles into exactly one of `{"decision":"verified","fingerprint":"..."}` or `{"decision":"replace","reason":"...","record":{...}}`; `template --decision replace --write --force` pre-fills the replacement record. A replacement record must match its `confirmed`, `needs_validation`, or `rejected` schema branch. Treat a rejected Phase 5 result the same way as in Phase 3: the parent never repairs it, returns the reported lines to the same verifier when possible, and otherwise re-runs with a fresh verifier when the budget permits.
 
-Do not apply a Phase 5 replacement as final when it promotes a record to a stronger verdict, including any promotion to `confirmed`, or materially changes the root cause, trace, execution input or observed result, demonstrated impact, or severity. Give that complete replacement to a new independent verifier that did not hunt, perform Phase 3 validation, or propose the Phase 5 replacement. The new verifier rechecks the current source and independently reproduces any decisive local result under the execution boundary, then returns `verified` or another replacement. Apply a material replacement only after this fresh verification. If another material replacement results, repeat with a fresh verifier. If budget or independence is unavailable, remove the disputed record from `findings.json`, keep its ledger unit as an unresolved candidate, and set `run_status: "incomplete"` with an exact `incomplete_reason`. Non-material wording or repository-line corrections may be applied directly when they do not change meaning or evidence.
+Do not apply a Phase 5 replacement as final when it promotes a record to a stronger verdict, including any promotion to `confirmed`, or materially changes the root cause, trace, execution input or observed result, demonstrated impact, or severity. `ingest` detects these changes and holds such a replacement as pending instead of applying it. Give that complete replacement to a new independent verifier (a new `record-verifier` agent; the tool refuses one that hunted, performed Phase 3 validation, or proposed the replacement), whose brief and template carry the pending replacement. The new verifier rechecks the current source and independently reproduces any decisive local result under the execution boundary, then returns `verified` or another replacement. Apply a material replacement only after this fresh verification; `ingest` applies it when that verifier returns `verified`. If another material replacement results, repeat with a fresh verifier. If budget or independence is unavailable, remove the disputed record with `audit-state.cjs record remove --fingerprint <fingerprint> --reason "<exact reason>"`, which keeps its ledger unit as an unresolved candidate, and end the run with `finish --status incomplete` and an exact reason. Non-material wording or repository-line corrections may be applied directly when they do not change meaning or evidence: `ingest` applies line-only corrections itself, and the parent applies a flagged wording-only change with `record apply --fingerprint <fingerprint> --non-material --reason "<why>"`.
 
-After every applied replacement, rerun both validators and update linked ledger decisions. If a final verifier identifies a separate root cause, assign a new fingerprint and send it through independent candidate validation before inclusion. Set `run_status: "complete"` only when every ledger candidate has an independent final disposition and every retained record passes Phase 5.
+After every applied replacement, the tool reruns both validators in-process and records the decision in the linked ledger units. If a final verifier identifies a separate root cause, the parent passes `--new-root-cause` to `ingest`, which registers the new fingerprint as a candidate that must pass independent candidate validation before inclusion. Set `run_status: "complete"` with `audit-state.cjs finish --status complete` only when every ledger candidate has an independent final disposition and every retained record passes Phase 5; the tool refuses otherwise.
 
 Do not verify only `confirmed` records. A misleading `needs_validation` handoff wastes owner time and can preserve a false premise.
 
 ### Phase 6: Produce target-neutral reports from final records
 
-Only after Phase 5 passes for every record retained in `findings.json`, derive prose from the final records, the ledger, and the hunter `hardening` notes retained in ledger bookkeeping. An incomplete run may report independently verified records, but it must identify each unresolved ledger candidate and must not present it as a finding. The prose files never change a verdict, severity, blocker, or demonstrated impact.
+Only after Phase 5 passes for every record retained in `findings.json`, derive prose from the final records, the ledger, and the hunter `hardening` notes retained in each unit's `bookkeeping.hardening`. `audit-state.cjs show finding <fingerprint>`, `show units`, and `status` print them as plain text; `progress.html` shows the same state for human readers but is not a report deliverable. An incomplete run may report independently verified records, but it must identify each unresolved ledger candidate and must not present it as a finding. The prose files never change a verdict, severity, blocker, or demonstrated impact.
 
 #### `REPORT.md`
 

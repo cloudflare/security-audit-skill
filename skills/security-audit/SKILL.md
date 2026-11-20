@@ -51,6 +51,10 @@ In full audit mode, resolve these values before reconnaissance:
 - **Output directory**: a new writable directory outside the target, defaulting to `~/security-audit-skill/<repo-name>/run-<N>`, where `<N>` is the next unused integer. Use a directory inside the target only when the user explicitly selects it and the parent verifies that version control ignores the whole directory. Otherwise stop and request an external path.
 - **Source ref**: the reviewed commit and whether the worktree is dirty. Do not treat unreviewed generated or modified files as another revision.
 
+### Structured state
+
+No agent writes JSON by hand. In full audit mode the parent creates and changes every JSON run file only through `audit-state.cjs`, and every delegated agent writes its structured result as record text — `key: value` lines with no quoting or escaping — in its own result file. The tool compiles record text into the exact contracts this skill defines, validates every write with `validate-findings.cjs` and `validate-coverage-ledger.cjs`, reports problems by source line, and regenerates a human-readable `progress.html` after every change. Read [AUDIT-STATE-TOOL.md](AUDIT-STATE-TOOL.md) before setup; it maps each phase to its commands.
+
 ### Write isolation
 
 The parent creates and is the only writer of shared run files:
@@ -62,8 +66,9 @@ The parent creates and is the only writer of shared run files:
 - `REPORT.md`
 - `FINDINGS-DETAIL.md`
 - `NEEDS-VALIDATION.md`
+- `state/` and `progress.html`, written only by `audit-state.cjs`
 
-Each hunter or verifier receives a unique root under `<output-dir>/agents/<agent-id>/`, with separate `scratch/` and `artifacts/` directories. Canonical agent IDs match `^[a-z0-9][a-z0-9_-]{0,63}$` and must not equal a Windows device name such as `con`, `prn`, `aux`, `nul`, `com1` through `com9`, or `lpt1` through `lpt9`. Lowercase IDs prevent case-fold collisions. The agent and every target-controlled process may write only to `scratch/`; retained `artifacts/` is parent-owned, is never exposed to the sandbox, and is writable only by trusted parent-side promotion code. Agents may not change shared files, target source, retained artifacts, or another agent's directory. Do not use `/tmp` or the host home directory as a writable fallback.
+Each hunter or verifier receives a unique root under `<output-dir>/agents/<agent-id>/`, with separate `scratch/` and `artifacts/` directories. Every delegated agent with a structured result also has its own `result.txt` in that root. Canonical agent IDs match `^[a-z0-9][a-z0-9_-]{0,63}$` and must not equal a Windows device name such as `con`, `prn`, `aux`, `nul`, `com1` through `com9`, or `lpt1` through `lpt9`. Lowercase IDs prevent case-fold collisions. Every target-controlled process may write only to `scratch/`. The agent may write only to `scratch/` and its own `result.txt`, which is never exposed to the sandbox. Retained `artifacts/` is parent-owned, is never exposed to the sandbox, and is writable only by trusted parent-side promotion code. Agents may not change shared files, target source, retained artifacts, or another agent's directory. Do not use `/tmp` or the host home directory as a writable fallback.
 
 Before execution, the parent opens and retains trusted, non-inheritable directory descriptors for the agent's `scratch/` and `artifacts/` roots, and records an allowlist of expected scratch-relative artifact files plus explicit per-file and cumulative byte limits. Never pass those descriptors to the agent or sandbox. After the sandbox and all its processes terminate, trusted parent-side code promotes each allowlisted file separately:
 
@@ -83,7 +88,7 @@ Before execution, the parent opens and retains trusted, non-inheritable director
 
 For a reproduced check, record the command, exact test input, sandbox limits, and only the allowlisted environment variable names plus safe non-secret values needed to reproduce it. Never capture or copy the ambient environment, inherited variables, credential values, authentication state, or unrelated host paths. Launch from an empty environment rather than trying to redact one after execution.
 
-Before delegation, the parent writes `run-metadata.json` with at least `run_id`, `repo`, `target`, `source_ref`, `profile`, `scope_paths`, `budget` (null if unset), `execution_policy: "sandboxed-source-and-local-only"`, selected companion files, prior-run paths, shared-file owners, and `run_status: "in_progress"`. Update metadata only when those facts change; candidate state belongs in the coverage ledger and `findings.json`.
+Before delegation, the parent writes `run-metadata.json` with `audit-state.cjs init`. It holds at least `run_id`, `repo`, `target`, `source_ref`, `profile`, `scope_paths`, `budget` (null if unset), `execution_policy: "sandboxed-source-and-local-only"`, selected companion files, prior-run paths, shared-file owners, and `run_status: "in_progress"`; the tool fills the policy, owners, and status itself. Update metadata with `audit-state.cjs metadata` only when those facts change, and set the terminal status with `audit-state.cjs finish`; candidate state belongs in the coverage ledger and `findings.json`.
 
 ## Full audit planning
 
@@ -172,7 +177,7 @@ In full audit mode, follow all six phases in order:
 1. **Reconnaissance** — map the source, trust boundaries, local build paths, companion selections, prior evidence, and initial deterministic coverage ledger with [RECONNAISSANCE.md](RECONNAISSANCE.md).
 2. **Coverage-led hunting waves** — assign isolated hunters from the ledger and collect structured candidate results with [HUNTING.md](HUNTING.md), [ATTACK-CLASSES.md](ATTACK-CLASSES.md), and the selected domain companions.
 3. **Candidate validation** — consolidate fingerprints and give every candidate to a fresh source verifier as defined in [VALIDATION-AND-REPORTING.md](VALIDATION-AND-REPORTING.md).
-4. **Structured output** — write all final `confirmed`, `needs_validation`, and `rejected` records to `findings.json`; validate it with `report-schema.json` and `validate-findings.cjs`, and validate the coverage claim with `validate-coverage-ledger.cjs`.
+4. **Structured output** — build `findings.json` from all final `confirmed`, `needs_validation`, and `rejected` records with `audit-state.cjs findings write`, which validates it with `report-schema.json` and `validate-findings.cjs`; the coverage claim is validated with `validate-coverage-ledger.cjs`.
 5. **Independent record verification** — use fresh agents to verify final source claims and reconcile corrections or state changes.
 6. **Target-neutral report** — derive `REPORT.md`, `FINDINGS-DETAIL.md`, and `NEEDS-VALIDATION.md` from the final records, with no live-probe instructions.
 
@@ -190,3 +195,4 @@ Do not end the run before one of exactly two terminal states: (a) all Phase 6 ar
 8. Re-reporting carried same-source prior confirmed records or using them as exemplars that anchor the hunt.
 9. Assigning severity to `needs_validation` records.
 10. Writing the report before independent verification or letting prose and JSON disagree.
+11. Hand-writing or hand-repairing run JSON, or editing an agent's result file, instead of using `audit-state.cjs`.
