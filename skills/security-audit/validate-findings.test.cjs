@@ -64,6 +64,32 @@ function confirmed() {
   };
 }
 
+function confirmedFromSource() {
+  return {
+    verdict: "confirmed_from_source",
+    fingerprint: "src-query-unparameterized-sql",
+    title: "Unparameterized SQL query from request parameter",
+    description: "An attacker-controlled request parameter is concatenated directly into a SQL query.",
+    root_cause: "lookup_user interpolates req.query.id into the SQL string without parameterization.",
+    intended_behavior: "User identifiers must be bound as query parameters.",
+    trace: [source("entrypoint", "src/routes.js", 12), source("sink", "src/db.js", 44)],
+    evidence: [evidence("src/db.js", 44)],
+    conditions: [],
+    execution: {
+      executed: false,
+      not_executed_reason: "OS sandbox with network isolation and rlimits is unavailable on this host.",
+      attacker_perspective: "An unauthenticated remote HTTP client.",
+    },
+    remediation: { strategy: "Pass the identifier through a bound SQL parameter." },
+    severity: {
+      likelihood: { score: "high", reason: "The route is directly reachable without authentication." },
+      impact: { score: "high", reason: "The attacker can inject arbitrary SQL clauses into the query." },
+      overall_severity: "high",
+    },
+    confidence: { score: "high", reason: "The full entrypoint-to-sink path is source-visible with no parameterization or escaping." },
+  };
+}
+
 function needsValidation() {
   return {
     verdict: "needs_validation",
@@ -136,10 +162,16 @@ function producerShapedFindings() {
     fixed_code: "",
   }];
 
+  const sourceConfirmed = confirmedFromSource();
+  sourceConfirmed.remediation.code_changes = [{
+    file_name: "src/db.js",
+    fixed_code: "db.query('SELECT * FROM users WHERE id = $1', [id]);",
+  }];
+
   const blocked = needsValidation();
   delete blocked.validation_plan.deployment;
 
-  return [demonstrated, blocked, rejected()];
+  return [demonstrated, blocked, sourceConfirmed, rejected()];
 }
 
 function rejectMutation(factory, mutate) {
@@ -148,28 +180,33 @@ function rejectMutation(factory, mutate) {
   assert.notEqual(errorsFor([value]).length, 0);
 }
 
-test("schema is an actual top-level array with exactly three branches", () => {
+test("schema is an actual top-level array with exactly four branches", () => {
   assert.equal(schema.type, "array");
-  assert.equal(schema.items.oneOf.length, 3);
+  assert.equal(schema.items.oneOf.length, 4);
   assert.deepEqual(schema.items.oneOf.map((branch) => branch.properties.verdict.const), [
-    "confirmed", "needs_validation", "rejected",
+    "confirmed", "confirmed_from_source", "needs_validation", "rejected",
   ]);
   const confirmedSchema = schema.items.oneOf[0].properties;
   assert.equal(confirmedSchema.title.visibleContent, true);
   assert.equal(confirmedSchema.execution.properties.payloads.items.minLength, undefined);
   assert.equal(confirmedSchema.execution.properties.payloads.items.visibleContent, undefined);
   assert.equal(confirmedSchema.remediation.properties.code_changes.items.properties.fixed_code.minLength, undefined);
+  const sourceConfirmedSchema = schema.items.oneOf[1].properties;
+  assert.equal(sourceConfirmedSchema.execution.properties.executed.const, false);
+  assert.equal(sourceConfirmedSchema.execution.properties.not_executed_reason.visibleContent, true);
+  assert.equal(sourceConfirmedSchema.execution.properties.attacker_perspective.visibleContent, true);
+  assert.equal(sourceConfirmedSchema.remediation.properties.code_changes.items.properties.fixed_code.minLength, undefined);
 });
 
 test("accepts a producer-shaped findings document through the CLI", () => {
   const result = runCli(JSON.stringify(producerShapedFindings()));
   assert.equal(result.status, 0, cliOutput(result));
-  assert.match(result.stdout, /PASS: 3 findings valid/);
+  assert.match(result.stdout, /PASS: 4 findings valid/);
 });
 
 test("accepts empty output and each complete branch", () => {
   assert.deepEqual(errorsFor([]), []);
-  assert.deepEqual(errorsFor([confirmed(), needsValidation(), rejected()]), []);
+  assert.deepEqual(errorsFor([confirmed(), needsValidation(), confirmedFromSource(), rejected()]), []);
   const localOnly = needsValidation();
   delete localOnly.validation_plan.deployment;
   assert.deepEqual(errorsFor([localOnly]), []);
@@ -223,6 +260,9 @@ test("rejects invalid scalars and whitespace, control, format, or default-ignora
       [confirmed, (finding) => { finding.remediation.strategy = invisible; }],
       [confirmed, (finding) => { finding.severity.impact.reason = invisible; }],
       [confirmed, (finding) => { finding.confidence.reason = invisible; }],
+      [confirmedFromSource, (finding) => { finding.execution.not_executed_reason = invisible; }],
+      [confirmedFromSource, (finding) => { finding.execution.attacker_perspective = invisible; }],
+      [confirmedFromSource, (finding) => { finding.remediation.strategy = invisible; }],
       [needsValidation, (finding) => { finding.blockers = [invisible]; }],
       [needsValidation, (finding) => { finding.validation_plan = { local: invisible }; }],
       [rejected, (finding) => { finding.reason = invisible; }],
@@ -313,6 +353,37 @@ test("rejects severity above demonstrated impact", () => {
     finding.severity.overall_severity = "high";
     finding.severity.impact.score = "medium";
   });
+  rejectMutation(confirmedFromSource, (finding) => {
+    finding.severity.overall_severity = "critical";
+    finding.severity.impact.score = "high";
+  });
+});
+
+test("enforces confirmed_from_source execution and field contracts", () => {
+  assert.deepEqual(errorsFor([confirmedFromSource()]), []);
+  const cases = [
+    [confirmedFromSource, (finding) => { finding.execution.executed = true; }],
+    [confirmedFromSource, (finding) => { finding.execution.executed = "false"; }],
+    [confirmedFromSource, (finding) => { delete finding.execution.executed; }],
+    [confirmedFromSource, (finding) => { finding.execution.not_executed_reason = ""; }],
+    [confirmedFromSource, (finding) => { finding.execution.not_executed_reason = "   "; }],
+    [confirmedFromSource, (finding) => { finding.execution.not_executed_reason = "\u200b"; }],
+    [confirmedFromSource, (finding) => { finding.execution.attacker_perspective = ""; }],
+    [confirmedFromSource, (finding) => { finding.execution.attacker_perspective = "\u034f"; }],
+    [confirmedFromSource, (finding) => { finding.execution.observed_result = "Fabricated output."; }],
+    [confirmedFromSource, (finding) => { finding.execution.payloads = ["' OR 1=1 --"]; }],
+    [confirmedFromSource, (finding) => { finding.execution.instructions = ["Run locally."]; }],
+    [confirmedFromSource, (finding) => { finding.claimed_root_cause = "Should not be present."; }],
+    [confirmedFromSource, (finding) => { finding.blockers = ["No sandbox."]; }],
+    [confirmedFromSource, (finding) => { finding.validation_plan = { local: "Run test." }; }],
+    [confirmedFromSource, (finding) => { finding.reason = "Should not be present."; }],
+    [confirmedFromSource, (finding) => { finding.remediation.strategy = ""; }],
+    [confirmedFromSource, (finding) => { finding.remediation.code_changes = [{ file_name: "../escape.js", fixed_code: "ok" }]; }],
+    [confirmedFromSource, (finding) => { finding.trace[0].line = 0; }],
+    [confirmed, (finding) => { finding.execution.executed = false; }],
+    [confirmed, (finding) => { finding.execution.not_executed_reason = "Not allowed on confirmed."; }],
+  ];
+  for (const [factory, mutate] of cases) rejectMutation(factory, mutate);
 });
 
 test("rejects unsafe source paths", () => {
