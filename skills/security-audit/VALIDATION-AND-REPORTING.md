@@ -82,6 +82,9 @@ file separately:
 11. If any check is unavailable, cannot be enforced, or fails, discard the scratch
     entry; if it is decisive evidence, retain `needs_validation` with the exact
     promotion blocker.
+
+Reference implementation: `promote-artifacts.cjs` (run `--check` to verify host
+support; fails closed when OS primitives are unavailable).
 ```
 
 A verifier can promote `needs_validation` to `confirmed` only after independently establishing the complete path and bounded observed result. Demote proposed confirmation to `needs_validation` when a specific deployment or runtime fact remains unknown. Use `rejected` when source, local behavior, a visible control, missing meaningful impact, or an impossible prerequisite refutes the claim. `needs_validation` is never a parking place for a speculative idea.

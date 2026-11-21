@@ -45,6 +45,8 @@ Multiple runs against the same repo are additive. The skill uses prior ledgers a
 | `validate-findings.test.cjs` | Findings-validator tests and producer-compatible fixture checks |
 | `validate-coverage-ledger.cjs` | Zero-dependency validator for `coverage-ledger.json` in Phases 1–5 |
 | `validate-coverage-ledger.test.cjs` | Coverage-ledger validator tests |
+| `promote-artifacts.cjs` | Zero-dependency parent-side artifact promoter implementing the 11-step write-isolation procedure |
+| `promote-artifacts.test.cjs` | Artifact-promoter tests (allowlist bounds, symlinks, hard links, FIFOs, mutations, size limits, fail-closed) |
 
 ## Installation
 
