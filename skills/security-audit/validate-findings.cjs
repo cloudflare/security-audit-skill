@@ -561,6 +561,35 @@ function collectFindingSemanticErrors(findings) {
       if (SEVERITY_RANK.has(overall) && SEVERITY_RANK.has(impact) && SEVERITY_RANK.get(overall) > SEVERITY_RANK.get(impact)) {
         errors.push(`${base}.severity.overall_severity: cannot exceed demonstrated impact ${safeQuote(impact)}`);
       }
+    } else if (verdict === "confirmed_from_source") {
+      for (const forbidden of ["claimed_root_cause", "blockers", "validation_plan", "reason"]) {
+        if (hasOwn(finding, forbidden)) errors.push(`${base}: confirmed_from_source finding must not contain ${safeQuote(forbidden)}`);
+      }
+      const exec = finding.execution;
+      if (!exec || typeof exec !== "object" || Array.isArray(exec) || exec.executed !== false) {
+        errors.push(`${base}.execution.executed: confirmed_from_source finding requires executed to be false`);
+      }
+      if (!exec || typeof exec !== "object" || typeof exec.not_executed_reason !== "string" || !hasVisibleProse(exec.not_executed_reason)) {
+        errors.push(`${base}.execution.not_executed_reason: confirmed_from_source finding requires a visible reason why no code was executed`);
+      }
+      if (!exec || typeof exec !== "object" || typeof exec.attacker_perspective !== "string" || !hasVisibleProse(exec.attacker_perspective)) {
+        errors.push(`${base}.execution.attacker_perspective: confirmed_from_source finding requires a visible attacker_perspective`);
+      }
+      if (exec && typeof exec === "object" && !Array.isArray(exec)) {
+        for (const forbiddenExec of ["observed_result", "payloads", "instructions"]) {
+          if (hasOwn(exec, forbiddenExec)) {
+            errors.push(`${base}.execution: confirmed_from_source finding must not contain ${safeQuote(forbiddenExec)}`);
+          }
+        }
+      }
+      if (!finding.remediation || typeof finding.remediation !== "object" || typeof finding.remediation.strategy !== "string" || !hasVisibleProse(finding.remediation.strategy)) {
+        errors.push(`${base}: confirmed_from_source finding requires visible remediation`);
+      }
+      const overall = finding.severity && finding.severity.overall_severity;
+      const impact = finding.severity && finding.severity.impact && finding.severity.impact.score;
+      if (SEVERITY_RANK.has(overall) && SEVERITY_RANK.has(impact) && SEVERITY_RANK.get(overall) > SEVERITY_RANK.get(impact)) {
+        errors.push(`${base}.severity.overall_severity: cannot exceed demonstrated impact ${safeQuote(impact)}`);
+      }
     } else if (verdict === "needs_validation") {
       if (hasOwn(finding, "severity")) errors.push(`${base}: needs_validation finding must not contain "severity"`);
       for (const forbidden of ["execution", "remediation", "reason", "root_cause"]) {

@@ -20,7 +20,7 @@ Every hunter prompt contains these parts in this order:
 6. The core hunting method below, followed by the promotion procedure block.
 7. The core validation rules below.
 8. Carried same-source prior confirmed exclusions, each limited to fingerprint, title, and root cause, plus peer-owned current coverage IDs that this hunter must not duplicate.
-9. The unique scratch/artifact paths, safe agent ID, predeclared promotion allowlist and byte limits, and the structured-result contract, including the Structured hunter result block below and the `confirmed` and `needs_validation` branches of `report-schema.json` copied verbatim.
+9. The unique scratch/artifact paths, safe agent ID, predeclared promotion allowlist and byte limits, and the structured-result contract, including the Structured hunter result block below and the `confirmed`, `confirmed_from_source`, and `needs_validation` branches of `report-schema.json` copied verbatim.
 
 A prompt may select several companion blocks when the same path crosses several domains. Keep their constraints together. Scope is the hunter's coverage obligation, not permission to duplicate excluded work. If an unexpected different boundary appears, return it under `uncovered` so the parent creates a stable ledger unit and assigns it in the next wave.
 
@@ -74,10 +74,13 @@ inside the parent-approved OS-enforced sandbox. It must disable external network
 start from an empty allowlisted environment, expose target and tools read-only, permit
 writes only to your scratch directory, and apply low CPU, memory, process, file-size,
 disk, and wall-clock limits. Isolated loopback is allowed only for a local fixture.
-If any control is unavailable, do not execute: return needs_validation with that exact
-blocker. Prefer an existing unit test, minimal function harness, dummy-tenant service
-call, small malformed fixture, deterministic race schedule, or locally rendered policy.
-Do not install or fetch tools.
+If any control is unavailable, do not execute: return confirmed_from_source only if
+repository source alone completely proves the boundary violation and concrete impact with
+no unresolved runtime or deployment fact (recording the missing sandbox control in
+execution.not_executed_reason), or return needs_validation with that exact blocker. Prefer
+an existing unit test, minimal function harness, dummy-tenant service call, small malformed
+fixture, deterministic race schedule, or locally rendered policy. Do not install or fetch
+tools.
 
 Record the exact input, command, limits, and minimum result. For the environment,
 record only allowlisted variable names and safe non-secret values needed to reproduce
@@ -144,16 +147,22 @@ file separately:
    claimed root cause, including the strongest source-visible control.
 2. A proposed confirmed record needs a bounded local observed result, meaningful impact
    across a stated boundary, complete conditions, and no visible preventing layer.
-3. Do not strengthen a crash into code execution, ordinary work into shared availability,
+3. A proposed confirmed_from_source record is allowed only when target code could not be
+   executed (for example, required OS sandbox controls are unavailable) AND repository
+   source alone completely proves the entrypoint-to-sink path, absence of preventing
+   controls, conditions, and concrete impact with no unresolved runtime or deployment fact.
+   Set execution.executed to false and record why no code ran in
+   execution.not_executed_reason.
+4. Do not strengthen a crash into code execution, ordinary work into shared availability,
    or a same-principal action into privilege gain.
-4. If a required fact is not source-visible or locally observable, use
+5. If a required fact is not source-visible or locally observable, use
    needs_validation. Name exact blockers; do not give it severity or speculative completion.
-5. A missing best practice with no affected principal/resource is excluded or hardening,
+6. A missing best practice with no affected principal/resource is excluded or hardening,
    not a finding. A candidate disproved by source is not needs_validation.
-6. Use the same source-derived fingerprint for the same root cause in every state.
+7. Use the same source-derived fingerprint for the same root cause in every state.
    It must match `^[A-Za-z0-9][A-Za-z0-9._:/@+-]*$` and must not include a line,
    wave, agent, severity, or verdict.
-7. Return an empty candidate array when nothing survives these gates.
+8. Return an empty candidate array when nothing survives these gates.
 ```
 
 ## Local validation boundaries
@@ -163,7 +172,7 @@ Local execution is for confirmation, not impact expansion:
 - **Allowed only in the required OS sandbox:** offline builds with present dependencies; isolated-loopback processes using dummy state; unit and integration tests; small fixture processing; sanitizers; bounded fuzz/regression tests; deterministic concurrency checks; local browser/emulator tests with dummy accounts; rendered manifests and policy evaluation with dummy identities; mocked external or paid calls.
 - **Disallowed:** live or deployed traffic; requests to services not started for this isolated check; network dependency installation; real accounts or credentials; production data; shared queues, cloud resources, runners, registries, signing or release services; publishing; stress, saturation, or cost generation; any work after the minimum dummy-data boundary result.
 
-The sandbox starts with an empty environment, gives target code no external network or host writable path, and enforces explicit low resource and time limits for every check, not only checks expected to be expensive. Scratch output remains target-controlled after exit. Promote it only with the no-follow, path-confined, regular-file, bounded-size host procedure in `SKILL.md`. Missing any sandbox or promotion capability does not erase a source-grounded candidate; represent the exact blocker in `needs_validation`.
+The sandbox starts with an empty environment, gives target code no external network or host writable path, and enforces explicit low resource and time limits for every check, not only checks expected to be expensive. Scratch output remains target-controlled after exit. Promote it only with the no-follow, path-confined, regular-file, bounded-size host procedure in `SKILL.md`. Missing any sandbox or promotion capability does not erase a source-grounded candidate: use `confirmed_from_source` when repository source alone completely proves the defect, or represent the exact blocker in `needs_validation` when execution or an external fact is still required.
 
 ## Structured hunter result
 
@@ -208,6 +217,7 @@ Return exactly one JSON object, with no surrounding prose:
 Each `candidates` entry is schema-shaped except that it uses `proposed_verdict` in place of `verdict`:
 
 - `proposed_verdict: "confirmed"`: include every field required by the `confirmed` branch of `report-schema.json` other than `verdict`: `fingerprint`, title, description, `root_cause`, `intended_behavior`, ordered `trace`, `evidence`, `conditions`, target-neutral `execution`, `remediation`, `severity`, and `confidence`. The execution instructions describe only the bounded local check already performed. `payloads` holds the minimum test input, fixture, or native invocation. `observed_result` records actual local output. Overall severity must not exceed observed impact.
+- `proposed_verdict: "confirmed_from_source"`: include every field required by the `confirmed_from_source` branch of `report-schema.json` other than `verdict`: `fingerprint`, title, description, `root_cause`, `intended_behavior`, ordered `trace`, `evidence`, `conditions`, `execution` (`executed: false`, visible `not_executed_reason`, and `attacker_perspective` only — no `observed_result`, `payloads`, or `instructions`), `remediation`, `severity`, and `confidence`. Overall severity must not exceed demonstrated impact.
 - `proposed_verdict: "needs_validation"`: include every field required by that schema branch other than `verdict`: `fingerprint`, title, description, `claimed_root_cause`, ordered `trace`, `evidence`, nonempty `blockers`, and `validation_plan` with at least one applicable `local` or `deployment` step. Do not invent an inapplicable context. Do not include severity, execution, remediation, reason, or a confirmed `root_cause`. `deployment` is an owner-observed check, not a request to probe a live target.
 
 Every assigned coverage ID appears exactly once in `units`. A `covered` unit needs an owner, nonempty `reviewed_paths` and `checks`, no unresolved fact, and no candidate. A `candidate` unit has the same owned evidence and is the only state that carries linked fingerprints. A `blocked` unit is an owned partial review with nonempty paths, checks, and unresolved facts but no fingerprint. All source paths are repository-relative, never absolute or traversal paths. A trace with several entries begins at `entrypoint`, ends at `sink`, and labels intermediate steps `propagation`. Every check has its own canonical lowercase `agent_id` and nonempty `reviewed_paths`; the unit-level list is exactly the union of those owned paths. A `source` check uses `artifact: null`. A `local` check uses one successfully parent-promoted regular file beneath `agents/<check.agent_id>/artifacts/`; this permits a verifier to add independently owned evidence without taking ownership from the hunter. Never link scratch, an output-root file, or another check owner's artifact.
