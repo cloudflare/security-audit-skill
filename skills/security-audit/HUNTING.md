@@ -133,6 +133,9 @@ file separately:
 11. If any check is unavailable, cannot be enforced, or fails, discard the scratch
     entry; if it is decisive evidence, retain `needs_validation` with the exact
     promotion blocker.
+
+Reference implementation: `promote-artifacts.cjs` (run `--check` to verify host
+support; fails closed when OS primitives are unavailable).
 ```
 
 #### Core validation rules — include in every hunter prompt
