@@ -80,6 +80,10 @@ const PRIOR_STATUSES = new Set([
   "none",
 ]);
 const FINGERPRINT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/@+-]*$/;
+const COMPANION_SELECTION_STATUSES = new Set(["in_progress", "covered", "candidate", "blocked"]);
+const COMPANION_SECTION_BLOCKS = ["Core discipline", "Universal moves", "Validation rules"];
+const ORDINARY_CLASS_FILE = "ATTACK-CLASSES.md";
+const COMPANION_FILE_REFERENCE = /^([A-Za-z0-9_][A-Za-z0-9_.-]*\.md)#/;
 const AGENT_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const WINDOWS_RESERVED_AGENT_ID = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/;
 const VISIBLE_CONTENT = /[^\p{White_Space}\p{Cc}\p{Cf}\p{Default_Ignorable_Code_Point}]/u;
@@ -488,6 +492,39 @@ function validateExcludedBlocks(value, location, errors) {
   });
 }
 
+function companionFileOf(block) {
+  if (typeof block !== "string") return null;
+  const match = COMPANION_FILE_REFERENCE.exec(block);
+  return match !== null && match[1] !== ORDINARY_CLASS_FILE ? match[1] : null;
+}
+
+function validateCompanionSelection(unit, base, errors) {
+  if (!COMPANION_SELECTION_STATUSES.has(unit.status)) return;
+  if (!Array.isArray(unit.selected_companion_blocks) || !isObject(unit.canonical_refs)) return;
+
+  const selected = new Set(unit.selected_companion_blocks);
+  const attackClass = unit.canonical_refs.attack_class;
+  const claimedCompanion = companionFileOf(attackClass);
+  if (claimedCompanion !== null && !selected.has(attackClass)) {
+    errors.push(`${base}.selected_companion_blocks: must select the claimed companion class ${safeQuote(attackClass)}`);
+  }
+
+  const companionFiles = new Set();
+  for (const block of selected) {
+    const file = companionFileOf(block);
+    if (file !== null) companionFiles.add(file);
+  }
+  if (claimedCompanion !== null) companionFiles.add(claimedCompanion);
+  for (const file of companionFiles) {
+    for (const section of COMPANION_SECTION_BLOCKS) {
+      const block = `${file}#${section}`;
+      if (!selected.has(block)) {
+        errors.push(`${base}.selected_companion_blocks: companion ${safeQuote(file)} requires ${safeQuote(block)}`);
+      }
+    }
+  }
+}
+
 function semanticKey(unit) {
   return JSON.stringify([
     unit.surface,
@@ -692,6 +729,7 @@ function collectUnitErrors(unit, index) {
   }
   validateStringArray(unit.selected_companion_blocks, `${base}.selected_companion_blocks`, errors);
   validateExcludedBlocks(unit.excluded_blocks, `${base}.excluded_blocks`, errors);
+  validateCompanionSelection(unit, base, errors);
   if (Array.isArray(unit.selected_companion_blocks) && Array.isArray(unit.excluded_blocks)) {
     const selected = new Set(unit.selected_companion_blocks);
     unit.excluded_blocks.forEach((entry, blockIndex) => {
