@@ -259,6 +259,102 @@ test("validates assignment block maps", () => {
   assert(errorsFor([noReason]).some((error) => error.includes("reason")));
 });
 
+const COMPANION_CLASS = "AI-AND-LLM.md#Tool-argument injection into a downstream sink";
+const COMPANION_SECTIONS = [
+  "AI-AND-LLM.md#Core discipline",
+  "AI-AND-LLM.md#Universal moves",
+  "AI-AND-LLM.md#Validation rules",
+];
+
+function companionUnit(overrides = {}) {
+  const canonicalRefs = {
+    surface: "src/tools/run.ts#callTool",
+    boundary: "src/agent/context.ts#assemblePrompt",
+    subsystem: "packages/agent",
+    attack_class: COMPANION_CLASS,
+  };
+  return unit({
+    coverage_id: canonicalCoverageId(canonicalRefs),
+    canonical_refs: canonicalRefs,
+    attack_class: "Tool-argument injection into a downstream sink",
+    surface: "Tool call dispatch",
+    boundary: "Prompt assembly",
+    subsystem: "Agent",
+    starting_paths: ["src/tools/run.ts"],
+    ordinary_attack_class_block: "ATTACK-CLASSES.md#Injection",
+    selected_companion_blocks: [COMPANION_CLASS, ...COMPANION_SECTIONS],
+    status: "covered",
+    agent_id: "hunter-1",
+    reviewed_paths: ["src/tools/run.ts"],
+    local_checks: [sourceCheck("hunter-1", {
+      reviewed_paths: ["src/tools/run.ts"],
+      invariant: "Tool arguments are validated before the sink.",
+      result: "Decoded arguments reach the sink unchanged.",
+    })],
+    ...overrides,
+  });
+}
+
+test("requires a claimed companion class to be selected for its hunter prompt", () => {
+  assert.deepEqual(errorsFor([companionUnit()]), []);
+
+  const omitted = companionUnit({ selected_companion_blocks: [] });
+  assert(errorsFor([omitted]).some((error) => error.includes("must select the claimed companion class")));
+
+  const substituted = companionUnit({ selected_companion_blocks: COMPANION_SECTIONS });
+  assert(errorsFor([substituted]).some((error) => error.includes("must select the claimed companion class")));
+});
+
+test("requires the companion Core discipline, Universal moves, and Validation rules", () => {
+  for (const section of COMPANION_SECTIONS) {
+    const missing = companionUnit({
+      selected_companion_blocks: [COMPANION_CLASS, ...COMPANION_SECTIONS.filter((block) => block !== section)],
+    });
+    assert(
+      errorsFor([missing]).some((error) => error.includes(`requires "${section}"`)),
+      `missing ${section}: ${errorsFor([missing]).join(" | ")}`,
+    );
+  }
+});
+
+test("enforces companion selection for every assigned coverage state", () => {
+  for (const status of ["in_progress", "covered", "candidate", "blocked"]) {
+    const value = companionUnit({
+      status,
+      selected_companion_blocks: [COMPANION_CLASS],
+      unresolved: status === "blocked" ? ["The deployed policy is unavailable."] : [],
+      result_fingerprints: status === "candidate" ? ["src-tools-run-argument-injection"] : [],
+    });
+    if (status === "in_progress") {
+      value.reviewed_paths = [];
+      value.local_checks = [];
+    }
+    assert(
+      errorsFor([value]).some((error) => error.includes('requires "AI-AND-LLM.md#Core discipline"')),
+      status,
+    );
+  }
+});
+
+test("leaves unassigned units and ordinary classes free of companion sections", () => {
+  const planned = companionUnit({
+    status: "planned",
+    agent_id: null,
+    selected_companion_blocks: [COMPANION_CLASS],
+    reviewed_paths: [],
+    local_checks: [],
+  });
+  assert.deepEqual(errorsFor([planned]), []);
+
+  const ordinary = unit({
+    status: "covered",
+    agent_id: "hunter-1",
+    reviewed_paths: ["src/router.ts"],
+    local_checks: [sourceCheck()],
+  });
+  assert.deepEqual(errorsFor([ordinary]), []);
+});
+
 test("requires owned artifacts for local checks and null artifacts for source checks", () => {
   const local = unit({
     status: "covered",
