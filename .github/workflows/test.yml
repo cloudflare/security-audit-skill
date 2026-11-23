@@ -3,8 +3,21 @@ name: Test
 on:
   push:
     branches: [main]
+    paths:
+      - "skills/**"
+      - ".github/workflows/test.yml"
   pull_request:
     branches: [main]
+    paths:
+      - "skills/**"
+      - ".github/workflows/test.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   validators:
@@ -14,10 +27,10 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 20
+          node-version: lts/*
       - name: Run validate-findings tests
         run: node validate-findings.test.cjs
         working-directory: skills/security-audit
