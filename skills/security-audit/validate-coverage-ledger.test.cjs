@@ -589,7 +589,7 @@ test("returns a generic syntax error without parser-supplied controls", { skip: 
   assertNoInjectedControlBytes(result.stderr);
 });
 
-test("does not reflect controls from a failed CLI input path", () => {
+test("does not reflect controls from a failed CLI input path", { skip: !HAS_SAFE_INPUT_OPEN }, () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "validate-coverage-ledger-path-"));
   const missingPath = path.join(directory, `missing-${TERMINAL_CONTROL_PAYLOAD}.json`);
   try {
