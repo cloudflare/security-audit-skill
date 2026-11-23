@@ -65,6 +65,12 @@ npx skills add https://github.com/cloudflare/security-audit-skill \
 
 Run `npx skills --help` for agent-selection and non-interactive options.
 
+Or install it with the [GitHub CLI](https://cli.github.com/manual/gh_skill):
+
+```bash
+gh skill install cloudflare/security-audit-skill security-audit
+```
+
 ## Usage
 
 Start your coding agent in (or pointed at) the codebase you want to audit, then ask it to do a security audit:
