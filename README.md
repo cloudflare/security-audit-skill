@@ -21,6 +21,9 @@ The verdicts are distinct: `confirmed` has a complete source trace and bounded o
 
 Multiple runs against the same repo are additive. The skill uses prior ledgers and findings to target gaps, revalidate changed source, and carry forward current-source evidence without treating stale or unresolved work as covered.
 
+> [!warning]
+> Depending on repo size and complexity this security-audit skill may use a considerable amount of tokens. Ensure you have the allowance and/or usage tokens available to complete the task. You can ask your agent for a cost estimate prior to execution.
+
 ## Files
 
 | File | Purpose |
